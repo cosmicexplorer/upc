@@ -1,0 +1,11 @@
+[package]
+name = "local"
+version = "0.1.0"
+authors = ["Danny McClanahan <1305167+cosmicexplorer@users.noreply.github.com>"]
+edition = "2018"
+
+[build-dependencies]
+glob = "0.3.0"
+
+[dependencies]
+thrift = "0.13.0"
