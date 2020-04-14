@@ -1,7 +1,7 @@
-namespace rs upc.local.glob_matching
+namespace rs upc.local.thrift_rust.glob_matching
+namespace java upc.local.thrift_java.glob_matching
 
-include "fs.thrift"
-include "locators.thrift"
+include "directory.thrift"
 
 
 struct SinglePathGlob {
@@ -15,8 +15,10 @@ struct PathGlobs {
 struct ExpandGlobsRequest {
   1: optional PathGlobs path_globs,
 }
+// TODO: make this ExpandGlobsAsyncResult and return a token to allow for greater parallelism when
+// invoking processes that depend on the result of a glob expansion!!
 struct ExpandGlobsResult {
-  1: optional locators.DirectoryDigest directory_digest,
+  1: optional directory.DirectoryDigest directory_digest,
 }
 
 enum GlobMatchingErrorCode {

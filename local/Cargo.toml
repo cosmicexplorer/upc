@@ -6,6 +6,7 @@ edition = "2018"
 
 [build-dependencies]
 glob = "0.3.0"
+walkdir = "2"
 
 [dependencies]
 thrift = "0.13.0"
