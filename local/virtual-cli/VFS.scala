@@ -7,6 +7,7 @@ import scala.collection.mutable
 import scala.util.Try
 
 
+// Just used to get a unique symbol.
 class FD
 
 case class OpenedFile(fd: FD)
@@ -32,29 +33,29 @@ trait VFS {
   type FileDescriptorType
   type EntryType
   type FileType <: FileContent
-  type DirectoryType <: MutableChildren[PathType, EntryType]
+  type RelPathType
+  type DirectoryType <: MutableChildren[RelPathType, EntryType]
 }
 
 
-trait AsPath[T] {
-  def asPath(self: T): Path
+trait AsPath[T, PathType] {
+  def asPath(self: T): PathType
 }
 
 
 trait VFSImplicits { self: VFS =>
-  object Implicits {
-    implicit object PathAsPath extends AsPath[Path] {
+  object VFSImplicitDefs {
+    implicit object PathAsPath extends AsPath[Path, Path] {
       override def asPath(self: Path): Path = self
     }
-    implicit object FileAsPath extends AsPath[java.io.File] {
+    implicit object FileAsPath extends AsPath[java.io.File, Path] {
       override def asPath(self: java.io.File) = Path(self)
     }
 
-    implicit class PathWrapper[T: AsPath](pathLike: T) {
-      private def pathConverter = implicitly[AsPath[T]]
-      private def asPath: Path = pathConverter.asPath(pathLike)
-      def locateReadableStream(): Readable = openFile(asPath).map(_.asReadableFile).get
-      def locateWritableStream(): Writable = openFile(asPath).map(_.asWritableFile).get
+    implicit class PathWrapper[T](pathLike: T)(implicit pathConverter: AsPath[T, PathType]) {
+      private def asPath: PathType = pathConverter.asPath(pathLike)
+      def locateReadableStream(): Readable = openFile(asPath).map(asReadableFile(_)).get
+      def locateWritableStream(): Writable = openFile(asPath).map(asWritableFile(_)).get
     }
   }
 }
@@ -66,6 +67,7 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
   type FileDescriptorType = OpenedFile
   type EntryType = DirEntry
   type FileType = File
+  type RelPathType = RelPath
   type DirectoryType = Directory
 
   val openedPathMapping: mutable.Map[OpenedFile, Path] = mutable.Map.empty
@@ -75,27 +77,33 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
 
   override def openFile(path: Path): Try[OpenedFile] = Try {
     fileMapping.get(path) match {
-      case None => throw LocationFailed(s"failed to locate path $path"),
+      case None => throw LocationFailed(s"failed to locate path $path")
       case Some(x: File) => {
         val descriptor = OpenedFile(new FD)
         openedPathMapping(descriptor) = path
         fdMapping(descriptor) = x
         fdSeekPositions(descriptor) = SeekPosition(0)
         descriptor
-      },
-      case Some(x) => throw WrongEntryType(s"result $x was not a file"),
+      }
+      case Some(x) => throw WrongEntryType(s"result $x was not a file")
     }
   }
   override def updateFileContents(path: Path, file: File): Unit = {
     fileMapping.update(path, file)
   }
-  override def asReadableFile(opened_file: OpenedFile): Readable = new ReadableFile(opened_file)
-  override def asWritableFile(opened_file: OpenedFile): Writable = new WritableFile(opened_file)
+
+  def newHandle(openedFile: OpenedFile): FileHandle = new FileHandle(openedFile, this)
+
+  override def asReadableFile(openedFile: OpenedFile): Readable =
+    new ReadableFile(newHandle(openedFile))
+  override def asWritableFile(openedFile: OpenedFile): Writable =
+    new WritableFile(newHandle(openedFile))
+
   override def scanDir(path: Path): Try[Directory] = Try {
     fileMapping.get(path) match {
-      case None => throw LocationFailed(s"failed to locate path $path"),
-      case Some(x: Directory) => x,
-      case Some(x) => throw WrongEntryType(s"result $x was not a directory"),
+      case None => throw LocationFailed(s"failed to locate path $path")
+      case Some(x: Directory) => x
+      case Some(x) => throw WrongEntryType(s"result $x was not a directory")
     }
   }
   override def mkdir(path: Path): Try[Directory] = Try {
@@ -104,47 +112,60 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
 
   override def currentFileMapping: FileMapping = fileMapping
 
-  abstract class FileHandle(opened_file: OpenedFile) extends Closeable {
-    protected def getFile(): File = fdMapping(opened_file)
-    protected def getPath(): Path = openedPathMapping(opened_file)
-    protected def getSeek(): SeekPosition = fdSeekPositions(opened_file)
-
-    protected def nonSyncClose(): Unit = {
-      openedPathMapping -= opened_file
-      fdMapping -= opened_file
-      fdSeekPositions -= opened_file
-    }
-
-    override def close(): Unit = DescriptorTrackingVFS.synchronized {
-      nonSyncClose()
-    }
+  def readAll(openedFile: OpenedFile): Array[Byte] = this.synchronized {
+    getFile(openedFile).content
+  }
+  def readBytesAt(openedFile: OpenedFile, output: Array[Byte]): Int = this.synchronized {
+    val readLength = ReadLength(output.length)
+    val sliced = getFile(openedFile).seekTo(getSeek(openedFile), readLength)
+    sliced.copyToArray(output)
+    sliced.length
   }
 
-  class ReadableFile(opened_file: OpenedFile) extends FileHandle(opened_file) with Readable {
-    override protected def readBytes(output: Array[Byte]): Int = {
-      val readableBytes = DescriptorTrackingVFS.synchronized {
-        getFile().seekTo(getSeek())
-      }
-      readableBytes.copyToArray(output)
-    }
+  def getFile(openedFile: OpenedFile): File = fdMapping(openedFile)
+  def getPath(openedFile: OpenedFile): Path = openedPathMapping(openedFile)
+  def getSeek(openedFile: OpenedFile): SeekPosition = fdSeekPositions(openedFile)
 
-    override def readAll(): Array[Byte] = DescriptorTrackingVFS.synchronized { getFile().content }
+  def closeFile(openedFile: OpenedFile): Unit = this.synchronized {
+    openedPathMapping -= openedFile
+    fdMapping -= openedFile
+    fdSeekPositions -= openedFile
   }
 
-  class WritableFile(opened_file: OpenedFile) extends FileHandle(opened_file) with Writable {
-    val sink = new ByteArrayOutputStream()
-
-    override protected def writeBytes(input: Array[Byte]): Unit = {
-      sink.write(input, 0, input.length)
-    }
-
-    override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
-
-    override protected def nonSyncClose(): Unit = {
-      super[FileHandle].nonSyncClose()
-      pendingWrites -= opened_file
-      val newFile = File(sink.toByteArray)
-      updateFileContents(getPath(), newFile)
-    }
+  def closeWriteFile(openedFile: OpenedFile, newFile: File): Unit = this.synchronized {
+    val prevPath = getPath(openedFile)
+    closeFile(openedFile)
+    pendingWrites -= openedFile
+    updateFileContents(prevPath, newFile)
   }
+}
+
+class FileHandle(openedFile: OpenedFile, vfs: DescriptorTrackingVFS) {
+  def getFile(): File = vfs.getFile(openedFile)
+  def getPath(): Path = vfs.getPath(openedFile)
+  def getSeek(): SeekPosition = vfs.getSeek(openedFile)
+
+  def readBytesAt(output: Array[Byte]): Int = vfs.readBytesAt(openedFile, output)
+  def readAll(): Array[Byte] = vfs.readAll(openedFile)
+
+  def closeForRead(): Unit = vfs.closeFile(openedFile)
+  def closeForWrite(newFile: File): Unit = vfs.closeWriteFile(openedFile, newFile)
+}
+
+class ReadableFile(handle: FileHandle) extends Readable with Closeable {
+  override protected def readBytes(output: Array[Byte]): Int = handle.readBytesAt(output)
+
+  override def readAll(): Array[Byte] = handle.readAll()
+
+  override def close(): Unit = handle.closeForRead()
+}
+
+class WritableFile(handle: FileHandle) extends Writable with Closeable {
+  val sink = new ByteArrayOutputStream()
+
+  override protected def writeBytes(input: Array[Byte]): Unit = sink.write(input, 0, input.length)
+
+  override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
+
+  override def close(): Unit = handle.closeForWrite(new File(sink.toByteArray))
 }

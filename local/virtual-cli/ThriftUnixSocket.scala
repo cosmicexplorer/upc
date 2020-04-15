@@ -1,10 +1,11 @@
 package upc.local.virtual_cli
 
+import ammonite.ops._
 import org.apache.thrift.transport.TSocket
 import org.newsclub.net.unix.{AFUNIXSocket, AFUNIXSocketAddress}
 
 import java.io.{Closeable => JavaCloseable}
-import scala.concurrent.[blocking, ExecutionContext, Future]
+import scala.concurrent.{blocking, ExecutionContext, Future}
 
 
 class ThriftUnixSocket(path: Path) extends JavaCloseable {

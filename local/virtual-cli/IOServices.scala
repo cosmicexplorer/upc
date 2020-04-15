@@ -5,21 +5,54 @@ import upc.local.thrift_java.file
 import upc.local.thrift_java.process_execution
 
 import ammonite.ops._
-import org.apache.thrift.{TServiceClient, TServiceClientFactory}
-import org.apache.thrift.protocol.{TBinaryProtocol, TProtocol}
+import org.apache.thrift.protocol.TBinaryProtocol
 
 import java.io.IOException
 import scala.concurrent.{blocking, ExecutionContext, Future}
 import scala.util.Try
 
 
-case class IOServicesConfig(
-  stdio: StdioStreams,
-  memoryService: Path,
-  directoryService: Path,
-  processReapService: Path,
-  executor: ExecutionContext,
+case class IOServiceClients(
+  memoryClient: file.MemoryMappingService.Iface,
+  directoryClient: directory.DirectoryService.Iface,
+  processReapClient: process_execution.ProcessReapService.Iface,
 )
+
+
+class IOServicesConfig(
+  memoryServicePath: Path,
+  directoryServicePath: Path,
+  processReapServicePath: Path,
+  implicit val executor: ExecutionContext,
+) extends AsyncCloseable {
+  private lazy val memorySocket = new ThriftUnixSocket(memoryServicePath)
+  private lazy val memoryProtocol = new TBinaryProtocol(memorySocket.thriftSocket)
+  private lazy val memoryClient = new file.MemoryMappingService.Client(memoryProtocol)
+
+  private lazy val directorySocket = new ThriftUnixSocket(directoryServicePath)
+  private lazy val directoryProtocol = new TBinaryProtocol(directorySocket.thriftSocket)
+  private lazy val directoryClient = new directory.DirectoryService.Client(directoryProtocol)
+
+  private lazy val processReapSocket = new ThriftUnixSocket(processReapServicePath)
+  private lazy val processReapProtocol = new TBinaryProtocol(processReapSocket.thriftSocket)
+  private lazy val processReapClient = new process_execution.ProcessReapService.Client(processReapProtocol)
+
+  def getClients() = IOServiceClients(
+    memoryClient = memoryClient,
+    directoryClient = directoryClient,
+    processReapClient = processReapClient,
+  )
+
+  import AsyncCloseable.Implicits._
+  override def asyncClose(): Future[Unit] = for {
+    () <- memorySocket.asyncClose()
+    () <- directorySocket.asyncClose()
+    () <- processReapSocket.asyncClose()
+  } yield ()
+}
+
+sealed abstract class IOServicesError(message: String) extends IOException(message)
+case class BadDigest(message: String) extends IOServicesError(message)
 
 case class Digest(fingerprint: String, sizeBytes: Long)
 
@@ -28,7 +61,7 @@ object Digest {
 
   def empty: Digest = apply(EMPTY_FINGERPRINT, 0).get
 
-  def apply(fingerprint: String, sizeBytes: Long): Try[FsState] = Try {
+  def apply(fingerprint: String, sizeBytes: Long): Try[Digest] = Try {
     if (fingerprint.length != 64) {
       throw BadDigest(
         s"length of fingerprint $fingerprint was not 64 bytes! was: ${fingerprint.length}")
@@ -37,16 +70,11 @@ object Digest {
       throw BadDigest(
         s"sizeBytes for digest with fingerprint $fingerprint was negative! was: $sizeBytes")
     }
-    val digest = new DirectoryDigest()
-    digest.setFingerprint(fingerprint)
-    digest.setSize_bytes(sizeBytes)
-    new Digest(digest)
+    new Digest(fingerprint, sizeBytes)
   }
 }
 
 trait ViaThrift[ThriftObject, RealObject] {
-  import ViaThrift._
-
   def fromThrift(thrift: ThriftObject): Try[RealObject]
   def toThrift(self: RealObject): ThriftObject
 }
@@ -61,10 +89,20 @@ object ViaThrift {
   ) {
     def toThrift: ThriftObject = viaThrift.toThrift(real)
   }
+
+  object Instances {
+    implicit val dirViaThrift: ViaThrift[directory.DirectoryDigest, DirectoryDigest] =
+      DirectoryViaThrift
+    implicit val fileViaThrift: ViaThrift[file.FileDigest, FileDigest] = FileViaThrift
+    implicit val processResultViaThrift: ViaThrift[
+      process_execution.ExecuteProcessResult,
+      CompleteVirtualizedProcessResult,
+    ] = ProcessResultViaThrift
+  }
 }
 
 case class DirectoryDigest(digest: Digest)
-implicit object DirectoryViaThrift extends ViaThrift[directory.DirectoryDigest, DirectoryDigest] {
+object DirectoryViaThrift extends ViaThrift[directory.DirectoryDigest, DirectoryDigest] {
   def fromThrift(thrift: directory.DirectoryDigest): Try[DirectoryDigest] = {
     val fingerprint = thrift.getFingerprint
     val sizeBytes = thrift.getSize_bytes
@@ -81,14 +119,14 @@ implicit object DirectoryViaThrift extends ViaThrift[directory.DirectoryDigest, 
 }
 
 case class FileDigest(digest: Digest)
-implicit object FileViaThrift extends ViaThrift[file.FileDigest, FileDigest] {
+object FileViaThrift extends ViaThrift[file.FileDigest, FileDigest] {
   def fromThrift(thrift: file.FileDigest): Try[FileDigest] = {
     val fingerprint = thrift.getFingerprint
     val sizeBytes = thrift.getSize_bytes
     Digest(fingerprint, sizeBytes)
       .map(FileDigest(_))
   }
-  def toThrift(self: FileDigest); file.FileDigest = {
+  def toThrift(self: FileDigest): file.FileDigest = {
     val digest = new file.FileDigest()
     digest.setFingerprint(self.digest.fingerprint)
     digest.setSize_bytes(self.digest.sizeBytes)
@@ -109,7 +147,7 @@ case class CompleteVirtualizedProcessResult(
   exitCode: ExitCode,
   ioState: IOFinalState,
 )
-implicit object ProcessResultViaThrift extends ViaThrift[
+object ProcessResultViaThrift extends ViaThrift[
   process_execution.ExecuteProcessResult,
   CompleteVirtualizedProcessResult,
 ] {
@@ -117,9 +155,9 @@ implicit object ProcessResultViaThrift extends ViaThrift[
     thrift: process_execution.ExecuteProcessResult,
   ): Try[CompleteVirtualizedProcessResult] = Try {
     val exitCode = ExitCode(thrift.getExit_code)
-    val stdout = thrift.getStdout.fromThrift().get
-    val stderr = thrift.getStderr.fromThrift().get
-    val digest = thrift.getOutput_directory_digest.fromThrift().get
+    val stdout = FileViaThrift.fromThrift(thrift.getStdout).get
+    val stderr = FileViaThrift.fromThrift(thrift.getStderr).get
+    val digest = DirectoryViaThrift.fromThrift(thrift.getOutput_directory_digest).get
     CompleteVirtualizedProcessResult(
       exitCode = exitCode,
       ioState = IOFinalState(
@@ -132,63 +170,52 @@ implicit object ProcessResultViaThrift extends ViaThrift[
   def toThrift(self: CompleteVirtualizedProcessResult): process_execution.ExecuteProcessResult = {
     val result = new process_execution.ExecuteProcessResult()
     result.setExit_code(self.exitCode.code)
-    result.setStdout(self.ioState.stdout.toThrift)
-    result.setStderr(self.ioState.stderr.toThrift)
-    result.setOutput_directory_digest(self.ioState.vfsDigest.toThrift)
+    result.setStdout(FileViaThrift.toThrift(self.ioState.stdout))
+    result.setStderr(FileViaThrift.toThrift(self.ioState.stderr))
+    result.setOutput_directory_digest(DirectoryViaThrift.toThrift(self.ioState.vfsDigest))
     result
   }
 }
 
-class IOServices(val config: IOServicesConfig) extends AsyncCloseable {
-  val IOServicesConfig(
-    stdioStreams,
-    memoryServicePath,
-    directoryServicePath,
-    processReapServicePath,
-    implicit executor,
-  ) = config
-  // NB: Currently, these don't need to be closed or flushed at all, because everything happens in
-  // memory, so no cleanup is required...yet!
-  lazy val stdio = new Stdio(stdioStreams)
-
-  private lazy val memorySocket = new ThriftUnixSocket(memoryServicePath)
-  private lazy val memoryProtocol = new TBinaryProtocol(memorySocket.thriftSocket)
-  private lazy val memoryClient = new MemoryMappingService.Client(memoryProtocol)
-
-  private lazy val directorySocket = new ThriftUnixSocket(directoryServicePath)
-  private lazy val directoryProtocol = new TBinaryProtocol(directorySocket.thriftSocket)
-  private lazy val directoryClient = new DirectoryService.Client(directoryProtocol)
+class IOServices(config: IOServicesConfig) extends AsyncCloseable {
+  val IOServiceClients(memoryClient, directoryClient, processReapClient) = config.getClients()
+  implicit val executor: ExecutionContext = config.executor
 
   def readFileMapping(): Future[FileMapping] = ???
 
-  def writeFileMapping(fileMapping: FileMapping): Future[IOFinalState] = {
+  private def writeIOState(
+    fileMapping: FileMapping,
+    stdioResults: StdioResults,
+  ): Future[IOFinalState] = {
     val uploadVFS: Future[DirectoryDigest] = Future { ??? }
     val uploadStdout: Future[FileDigest] = Future { ??? }
     val uploadStderr: Future[FileDigest] = Future { ??? }
-    IOFinalState(
-      digest = fsDigest,
+
+    for {
+      vfsDigest <- uploadVFS
+      stdoutDigest <- uploadStdout
+      stderrDigest <- uploadStderr
+    } yield IOFinalState(
+      vfsDigest = vfsDigest,
       stdout = stdoutDigest,
       stderr = stderrDigest,
     )
   }
 
-  private lazy val processReapSocket = new ThriftUnixSocket(processReapServicePath)
-  private lazy val processReapProtocol = new TBinaryProtocol(processReapSocket.thriftSocket)
-  private lazy val processReapClient = new ProcessReapService.Client(processReapProtocol)
+  def reapProcess(
+    exitCode: ExitCode,
+    stdioResults: StdioResults,
+    fileMapping: FileMapping,
+  ): Future[Unit] = for {
+    ioState <- writeIOState(fileMapping, stdioResults)
+    () <- Future { blocking {
+      val result = CompleteVirtualizedProcessResult(exitCode, ioState)
+      val thriftProcessResult = ProcessResultViaThrift.toThrift(result)
+      // TODO: If we keep this as a lazy val, it will only ever be instantiated exactly once,
+      // right here, in the blocking {} block. That might be what we want, but it might not!!!
+      processReapClient.reapProcess(thriftProcessResult)
+    }}
+  } yield ()
 
-  def reapProcess(exitCode: ExitCode, fileMapping: FileMapping): Future[Unit] =
-    writeFileMapping(fileMapping)
-      .map(CompleteVirtualizedProcessResult(exitCode, _))
-      .map(_.toThrift)
-      .flatMap { thriftProcessResult =>
-        Future { blocking {
-          // TODO: If we keep this as a lazy val, it will only ever be instantiated exactly once,
-          // right here, in the blocking {} block. That might be what we want, but it might not!!!
-          processReapClient.reapProcess(thriftProcessResult)
-        }}}
-
-  override def asyncClose(): Future[Unit] =
-    Future.sequence((
-      memorySocket.asyncClose(), directorySocket.asyncClose(), processReapClient.asyncClose(),
-    )).map { case ((), (), ()) => () }
+  override def asyncClose(): Future[Unit] = config.asyncClose()
 }

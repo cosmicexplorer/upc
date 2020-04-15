@@ -46,15 +46,25 @@ trait Writable extends JavaOutputStream {
 }
 
 
+sealed abstract class FileError(message: String) extends IOException(message)
+case class InvalidSeek(message: String) extends FileError(message)
+
+
 case class SeekPosition(offset: Int) {
   if (offset < 0) {
-    throw new RuntimeException(s"negative seek position: ${this}")
+    throw InvalidSeek(s"negative seek position: $this")
+  }
+}
+
+case class ReadLength(length: Int) {
+  if (length < 0) {
+    throw InvalidSeek(s"negative read length: $this")
   }
 }
 
 trait FileContent {
   def content: Array[Byte]
-  def seekTo(seekPosition: SeekPosition): Array[Byte]
+  def seekTo(seekPosition: SeekPosition, readLength: ReadLength): Array[Byte]
 }
 
 trait MutableChildren[PathType, EntryType] {
@@ -63,14 +73,18 @@ trait MutableChildren[PathType, EntryType] {
 
 sealed abstract class DirEntry
 
-class File(content: Array[Byte]) extends DirEntry
+class File(bytes: Array[Byte]) extends DirEntry
     with FileContent {
-  override def seekTo(seek_position: SeekPosition): Array[Byte] =
-    content.slice(seek_position.offset, content.length)
+  override def content: Array[Byte] = bytes
+
+  override def seekTo(seek_position: SeekPosition, readLength: ReadLength): Array[Byte] =
+    content.slice(seek_position.offset, readLength.length)
 }
 
-class Directory(children: mutable.Map[RelPath, DirEntry]) extends DirEntry
-    with MutableChildren[RelPath, DirEntry]
+class Directory(childrenMap: mutable.Map[RelPath, DirEntry]) extends DirEntry
+    with MutableChildren[RelPath, DirEntry] {
+  override def children: mutable.Map[RelPath, DirEntry] = childrenMap
+}
 
 
 class FileMapping(val allTrackedPaths: mutable.Map[Path, DirEntry]) {
