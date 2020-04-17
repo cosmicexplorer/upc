@@ -6,6 +6,13 @@ jar_library(
 )
 
 jar_library(
+  name='jnr-ffi',
+  jars=[
+    jar(org='com.github.jnr', name='jnr-ffi', rev='2.1.12'),
+  ],
+)
+
+jar_library(
   name='junixsocket',
   jars=[
     jar(org='com.kohlschutter.junixsocket', name='junixsocket-core', rev='2.3.2'),

@@ -143,7 +143,6 @@ trait VirtualizationImplementation {
 
 
 trait MainWrapper extends VirtualizationImplementation {
-  val MEMORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_MEMORY_SERVICE_THRIFT_SOCKET_PATH"
   val DIRECTORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_DIRECTORY_SERVICE_THRIFT_SOCKET_PATH"
   val PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH"
 
@@ -180,12 +179,10 @@ trait MainWrapper extends VirtualizationImplementation {
   }
 
   override def acquireIOServicesConfig(): Try[IOServicesConfig] = for {
-    memoryServicePath <- extractEnvVarPath(MEMORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     directoryServicePath <- extractEnvVarPath(DIRECTORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     processReapServicePath <- extractEnvVarPath(PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     executor <- createExecutionContext()
   } yield new IOServicesConfig(
-    memoryServicePath = memoryServicePath,
     directoryServicePath = directoryServicePath,
     processReapServicePath = processReapServicePath,
     executor = executor,

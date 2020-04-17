@@ -167,5 +167,5 @@ class WritableFile(handle: FileHandle) extends Writable with Closeable {
 
   override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
 
-  override def close(): Unit = handle.closeForWrite(new File(sink.toByteArray))
+  override def close(): Unit = handle.closeForWrite(File(sink.toByteArray))
 }

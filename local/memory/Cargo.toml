@@ -1,0 +1,15 @@
+[package]
+name = "memory"
+version = "0.1.0"
+authors = ["Danny McClanahan <1305167+cosmicexplorer@users.noreply.github.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }
+
+[build-dependencies]
+bindgen = "0.53.2"
+cbindgen = "0.8.6"

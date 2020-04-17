@@ -73,7 +73,7 @@ trait MutableChildren[PathType, EntryType] {
 
 sealed abstract class DirEntry
 
-class File(bytes: Array[Byte]) extends DirEntry
+case class File(bytes: Array[Byte]) extends DirEntry
     with FileContent {
   override def content: Array[Byte] = bytes
 
@@ -81,11 +81,10 @@ class File(bytes: Array[Byte]) extends DirEntry
     content.slice(seek_position.offset, readLength.length)
 }
 
-class Directory(childrenMap: mutable.Map[RelPath, DirEntry]) extends DirEntry
+case class Directory(childrenMap: mutable.Map[RelPath, DirEntry]) extends DirEntry
     with MutableChildren[RelPath, DirEntry] {
   override def children: mutable.Map[RelPath, DirEntry] = childrenMap
 }
-
 
 class FileMapping(val allTrackedPaths: mutable.Map[Path, DirEntry]) {
   def get(path: Path): Option[DirEntry] = this.synchronized { allTrackedPaths.get(path) }
