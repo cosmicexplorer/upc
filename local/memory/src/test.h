@@ -142,10 +142,6 @@
 #define S_IXUSR 64
 
 typedef struct {
-  uint8_t _0[32];
-} Fingerprint;
-
-typedef struct {
   Fingerprint fingerprint;
   uint64_t size_bytes;
 } ShmKey;

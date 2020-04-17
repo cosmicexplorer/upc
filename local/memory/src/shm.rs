@@ -1,13 +1,13 @@
 /* From https://gist.github.com/garcia556/8231e844a90457c99cc72e5add8388e4!! */
 use super::mmap_bindings::{self, key_t, size_t, IPC_CREAT, IPC_R, IPC_RMID, IPC_W};
 
-use hashing;
+use hashing::{Digest, Fingerprint};
 
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
 use std::collections::HashMap;
-use std::convert::From;
+use std::convert::{From, Into};
 use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -34,19 +34,6 @@ impl From<String> for ShmError {
   }
 }
 
-/* FIXME: I can't figure out how to make cbindgen work if I specify parse_deps=true at all. This is
- * a workaround. */
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Ord, PartialOrd)]
-pub struct Fingerprint(pub [u8; 32]);
-
-impl From<hashing::Fingerprint> for Fingerprint {
-  fn from(fp: hashing::Fingerprint) -> Self {
-    let hashing::Fingerprint(src) = fp;
-    Fingerprint(src)
-  }
-}
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ShmKey {
@@ -66,13 +53,22 @@ impl From<ShmKey> for key_t {
   }
 }
 
-impl From<hashing::Digest> for ShmKey {
-  fn from(digest: hashing::Digest) -> Self {
-    let hashing::Digest(fingerprint, size_bytes) = digest;
+impl From<Digest> for ShmKey {
+  fn from(digest: Digest) -> Self {
+    let Digest(fingerprint, size_bytes) = digest;
     ShmKey {
-      fingerprint: fingerprint.into(),
+      fingerprint,
       size_bytes: size_bytes as u64,
     }
+  }
+}
+
+impl Into<Digest> for ShmKey {
+  fn into(self: Self) -> Digest {
+    let ShmKey {
+      fingerprint, size_bytes
+    } = self;
+    Digest(fingerprint, size_bytes as usize)
   }
 }
 

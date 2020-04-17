@@ -26,9 +26,7 @@
 #![allow(clippy::mutex_atomic)]
 
 use bindgen;
-use cbindgen;
 
-use std::env;
 use std::path::PathBuf;
 
 fn main() {
@@ -61,9 +59,4 @@ fn main() {
     .unwrap()
     .write_to_file(bindings)
     .unwrap();
-
-  let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-  cbindgen::generate(&crate_dir)
-    .unwrap()
-    .write_to_file("src/test.h");
 }

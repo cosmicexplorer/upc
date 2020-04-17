@@ -4,6 +4,6 @@ language = "C"
 
 [parse]
 parse_deps = true
-include = ["hashing"]
+include = ["hashing", "memory"]
 [parse.expand]
-crates = ["hashing"]
+crates = ["hashing", "memory"]

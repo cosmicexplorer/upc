@@ -1,0 +1,21 @@
+[package]
+name = "directory"
+version = "0.1.0"
+authors = ["Danny McClanahan <1305167+cosmicexplorer@users.noreply.github.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+bazel_protos = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/process_execution/bazel_protos" }
+boxfuture = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/boxfuture" }
+bytes = "0.4.5"
+futures = "0.3"
+hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }
+indexmap = "1.0.2"
+lazy_static = "1"
+memory = { path = "../memory" }
+protobuf = { version = "2.0.6", features = ["with-bytes"] }
+store = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs/store" }
+task_executor = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/task_executor" }

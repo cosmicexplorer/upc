@@ -3,3 +3,4 @@
 target/
 /.cache/
 /.pants.workdir.file_lock
+/dist/
