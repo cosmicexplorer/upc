@@ -384,7 +384,7 @@ pub unsafe fn MAP_FAILED() -> *mut os::raw::c_void {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn retrieve_shm(request: ShmRetrieveRequest) -> ShmRetrieveResult {
+pub unsafe extern "C" fn shm_retrieve(request: ShmRetrieveRequest) -> ShmRetrieveResult {
   match ShmHandle::new(request.into()) {
     Ok(shm_handle) => ShmRetrieveResult::RetrieveSucceeded(shm_handle.get_base_address()),
     Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::RetrieveDidNotExist,
@@ -396,7 +396,7 @@ pub unsafe extern "C" fn retrieve_shm(request: ShmRetrieveRequest) -> ShmRetriev
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn allocate_shm(request: ShmAllocateRequest) -> ShmAllocateResult {
+pub unsafe extern "C" fn shm_allocate(request: ShmAllocateRequest) -> ShmAllocateResult {
   match ShmHandle::new(request.into()) {
     Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()),
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::DigestDidNotMatch(shm_key),
@@ -408,7 +408,7 @@ pub unsafe extern "C" fn allocate_shm(request: ShmAllocateRequest) -> ShmAllocat
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn delete_shm(request: ShmDeleteRequest) -> ShmDeleteResult {
+pub unsafe extern "C" fn shm_delete(request: ShmDeleteRequest) -> ShmDeleteResult {
   match ShmHandle::new(request.into()).and_then(|mut handle| handle.destroy_mapping()) {
     Ok(()) => ShmDeleteResult::DeletionSucceeded,
     Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
@@ -454,7 +454,7 @@ mod tests {
     let retrieve_request = ShmRetrieveRequest { key };
 
     assert_eq!(
-      unsafe { retrieve_shm(retrieve_request) },
+      unsafe { shm_retrieve(retrieve_request) },
       ShmRetrieveResult::RetrieveDidNotExist
     );
 
@@ -464,7 +464,7 @@ mod tests {
       source: source_ptr,
     };
 
-    let shared_memory_address = match unsafe { allocate_shm(allocate_request) } {
+    let shared_memory_address = match unsafe { shm_allocate(allocate_request) } {
       ShmAllocateResult::AllocationSucceeded(x) => x,
       x => unreachable!("did not expect allocation result {:?}", x),
     };
@@ -476,7 +476,7 @@ mod tests {
       read_bytes_from_address(shared_memory_address, source_bytes.len())
     );
 
-    let shared_memory_address_from_retrieve = match unsafe { retrieve_shm(retrieve_request) } {
+    let shared_memory_address_from_retrieve = match unsafe { shm_retrieve(retrieve_request) } {
       ShmRetrieveResult::RetrieveSucceeded(x) => x,
       x => unreachable!("did not expect retrieval result {:?}", x),
     };
@@ -486,18 +486,18 @@ mod tests {
     /* Delete the allocation. */
     let delete_request = ShmDeleteRequest { key };
     assert_eq!(
-      unsafe { delete_shm(delete_request) },
+      unsafe { shm_delete(delete_request) },
       ShmDeleteResult::DeletionSucceeded,
     );
     /* Assert that it cannot be deleted again. */
     assert_eq!(
-      unsafe { delete_shm(delete_request) },
+      unsafe { shm_delete(delete_request) },
       ShmDeleteResult::DeleteDidNotExist,
     );
 
     /* Assert that the mapping no longer exists when retrieved. */
     assert_eq!(
-      unsafe { retrieve_shm(retrieve_request) },
+      unsafe { shm_retrieve(retrieve_request) },
       ShmRetrieveResult::RetrieveDidNotExist,
     );
   }
