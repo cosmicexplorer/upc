@@ -3,111 +3,123 @@ package upc.local.memory
 import jnr.ffi.Pointer
 
 import java.nio.ByteBuffer
-import scala.util.{Try, Success, Failure}
+import scala.util.Try
 
 
 sealed abstract class ShmError(message: String) extends Exception(message)
 case class ShmNativeObjectEncodingError(message: String) extends ShmError(message)
-case class ShmAllocationError(message: String) extends ShmError(message)
-case class ShmRetrieveError(message: String) extends ShmError(message)
-case class ShmDeleteError(message: String) extends ShmError(message)
+class ShmAllocationError(message: String) extends ShmError(message)
+class ShmRetrieveError(message: String) extends ShmError(message)
+class ShmDeleteError(message: String) extends ShmError(message)
+case class MemoryMappingReadError(message: String) extends ShmError(message)
 
 
-case class Fingerprint(fingerprint: String) {
+object MemoryMapping {
+  def fromByteBuffer(buf: ByteBuffer) = new MemoryMapping(Pointer.wrap(LibMemory.runtime, buf))
+  def fromArray(buf: Array[Byte]) = fromByteBuffer(ByteBuffer.wrap(buf))
+}
+
+class MemoryMapping(private[upc] val pointer: Pointer) {
+  def getBytesCopy: Array[Byte] = {
+    val bytes: Array[Byte] = new Array(pointer.size.toInt)
+    pointer.get(0, bytes, 0, pointer.size.toInt)
+    bytes
+  }
+
+  def readBytesAt(offset: Long, output: Array[Byte]): Int = {
+    if (offset < 0) {
+      throw MemoryMappingReadError(
+        s"invalid offset $offset: cannot be negative!")
+    }
+    val remaining: Long = pointer.size - offset
+    if (remaining < 0) {
+      throw MemoryMappingReadError(
+        s"invalid offset $offset greater than memory mapping size ${pointer.size}")
+    }
+    val toWrite: Int = Math.min(remaining.toInt, output.length)
+    pointer.get(offset, output, 0, toWrite)
+    toWrite
+  }
+}
+
+
+case class Fingerprint(fingerprint: Array[Byte]) {
   if (fingerprint.length != 32) {
     throw ShmNativeObjectEncodingError(s"invalid fingerprint: must be 32 bytes (was: $fingerprint)")
   }
 }
-case class ShmKey(fingerprint: Fingerprint, length: Int) {
+case class ShmKey(fingerprint: Fingerprint, length: Long) {
   if (length < 0) {
     throw ShmNativeObjectEncodingError(s"invalid ShmKey: length must be non-negative (was: $this)")
   }
 }
 
-case class MemoryMapping(pointer: Pointer)
-object MemoryMapping {
-  def fromByteBuffer(buf: ByteBuffer) = MemoryMapping(Pointer.wrap(LibMemory.runtime, buf))
-}
-
 case class ShmAllocateRequest(key: ShmKey, source: MemoryMapping)
 sealed abstract class ShmAllocateResult
 case class AllocationSucceeded(source: MemoryMapping) extends ShmAllocateResult
-case class DigestDidNotMatch(key: ShmKey) extends ShmAllocationError(this.toString)
-case class AllocationFailed(error: String) extends ShmAllocateResult(this.toString)
+case class DigestDidNotMatch(key: ShmKey) extends ShmAllocationError(
+  s"digest did not match: correct key was $key")
+case class AllocationFailed(error: String) extends ShmAllocationError(
+  s"allocation failed: $error")
 
 case class ShmRetrieveRequest(key: ShmKey)
 sealed abstract class ShmRetrieveResult
 case class RetrieveSucceeded(source: MemoryMapping) extends ShmRetrieveResult
-case object RetrieveDidNotExist extends ShmRetrieveError(this.toString)
-case class RetrieveInternalError(error: String) extends ShmRetrieveError(this.toString)
+case object RetrieveDidNotExist extends ShmRetrieveError("entry to retrieve did not exist")
+case class RetrieveInternalError(error: String) extends ShmRetrieveError(s"retrieve failed: $error")
 
 case class ShmDeleteRequest(key: ShmKey)
 sealed abstract class ShmDeleteResult
 case object DeletionSucceeded extends ShmDeleteResult
-case object DeleteDidNotExist extends ShmDeleteError(this.toString)
-case class DeleteInternalError(error: String) extends ShmDeleteError(this.toString)
+case object DeleteDidNotExist extends ShmDeleteError("entry to delete did noot exist")
+case class DeleteInternalError(error: String) extends ShmDeleteError(s"deletion failed: $error")
 
 
 trait IntoNative[JvmType, NativeType] {
-  def intoNative(jvm: JvmType): NativeType
+  def intoNative(jvm: JvmType): Try[NativeType]
 }
 object IntoNative {
   implicit class JvmToNativeWrapper[JvmType, NativeType](jvm: JvmType)(
-    implicit intoNative: IntoNative[JvmType, NativeType]
+    implicit ctx: IntoNative[JvmType, NativeType]
   ) {
-    def intoNative: NativeType = intoNative.intoNative(jvm)
+    def intoNative(): Try[NativeType] = ctx.intoNative(jvm)
   }
 
   implicit object FingerprintIntoNative extends IntoNative[Fingerprint, LibMemory.Fingerprint] {
-    def intoNative(jvm: Fingerprint): LibMemory.Fingerprint = {
-      val fp = new LibMemory.Fingerprint
-      fp._0.set(jvm.fingerprint.getBytes)
-      fp
-    }
+    def intoNative(jvm: Fingerprint): Try[LibMemory.Fingerprint] = Try{
+      new LibMemory.Fingerprint(jvm.fingerprint)}
   }
   implicit object ShmKeyIntoNative extends IntoNative[ShmKey, LibMemory.ShmKey] {
-    def intoNative(jvm: ShmKey): LibMemory.ShmKey = {
-      val key = new LibMemory.ShmKey
-      key.fingerprint.set(jvm.fingerprint.intoNative)
-      key.length.set(jvm.length)
-      key
-    }
+    def intoNative(jvm: ShmKey): Try[LibMemory.ShmKey] = Try(
+      new LibMemory.ShmKey(
+        jvm.fingerprint.intoNative().get,
+        jvm.length,
+      ))
   }
 
   implicit object MemoryMappingIntoNative extends IntoNative[MemoryMapping, Pointer] {
-    def intoNative(jvm: MemoryMapping): Pointer = jvm.pointer
-  }
-
-  implicit object MemoryMappingIntoNative[MemoryMapping, Pointer] {
-    def intoNative(jvm: MemoryMapping): Pointer = Pointer.wrap(LibMemory.runtime, jvm)
+    def intoNative(jvm: MemoryMapping): Try[Pointer] = Try(jvm.pointer)
   }
 
   implicit object ShmAllocateRequestIntoNative
       extends IntoNative[ShmAllocateRequest, LibMemory.ShmAllocateRequest] {
-    def intoNative(jvm: ShmAllocateRequest): LibMemory.ShmAllocateRequest = {
-      val request = new LibMemory.ShmAllocateRequest
-      request.key.set(jvm.key.intoNative)
-      request.source.set(jvm.source.intoNative)
-      request
-    }
+    def intoNative(jvm: ShmAllocateRequest): Try[LibMemory.ShmAllocateRequest] = Try(
+      new LibMemory.ShmAllocateRequest(
+        jvm.key.intoNative().get,
+        jvm.source.intoNative().get,
+      ))
   }
 
   implicit object ShmRetrieveRequestIntoNative
       extends IntoNative[ShmRetrieveRequest, LibMemory.ShmRetrieveRequest] {
-    def intoNnative(jvm: ShmRetrieveRequest): LibMemory.ShmRetrieveRequest = {
-      val request = LibMemory.ShmRetrieveRequest
-      request.key.set(jvm.key.intoNative)
-      request
-    }
+    def intoNative(jvm: ShmRetrieveRequest): Try[LibMemory.ShmRetrieveRequest] = Try(
+      new LibMemory.ShmRetrieveRequest(jvm.key.intoNative().get))
   }
 
   implicit object ShmDeleteRequestIntoNative
       extends IntoNative[ShmDeleteRequest, LibMemory.ShmDeleteRequest] {
-    def intoNnative(jvm: ShmDeleteRequest): LibMemory.ShmDeleteRequest = {
-      val request = LibMemory.ShmDeleteRequest
-      request.key.set(jvm.key.intoNative)
-      request
-    }
+    def intoNative(jvm: ShmDeleteRequest): Try[LibMemory.ShmDeleteRequest] = Try(
+      new LibMemory.ShmDeleteRequest(jvm.key.intoNative().get))
   }
 }
 
@@ -118,27 +130,27 @@ trait FromNative[JvmType, NativeType] {
 }
 object FromNative {
   implicit class JvmFromNativeWrapper[JvmType, NativeType](native: NativeType)(
-    implicit fromNative: FromNative[JvmType, NativeType]
+    implicit ctx: FromNative[JvmType, NativeType]
   ) {
-    def fromNative(): Try[JvmType] = fromNative.fromNative(native)
+    def fromNative(): Try[JvmType] = ctx.fromNative(native)
   }
 
   implicit object FingerprintFromNative
       extends FromNative[Fingerprint, LibMemory.Fingerprint] {
-    def fromNative(native: LibMemory.Fingerprint): Try[Fingerprint] = Try(Fingerprint(
-      Arrays.toString(native._0.get)))
+    def fromNative(native: LibMemory.Fingerprint): Try[Fingerprint] = Try(
+      Fingerprint(native.getBytesCopy))
   }
   implicit object ShmKeyFromNative
       extends FromNative[ShmKey, LibMemory.ShmKey] {
     def fromNative(native: LibMemory.ShmKey): Try[ShmKey] = Try(ShmKey(
-      fingerprint = native.fingerprint.get.fromNative().get,
-      length = native.length.get.toInt,
+      fingerprint = native.getFingerprint.fromNative().get,
+      length = native.getLength,
     ))
   }
 
   implicit object MemoryMappingFromNative
       extends FromNative[MemoryMapping, Pointer] {
-    def fromNative(native: Pointer): Try[MemoryMapping] = Try(MemoryMapping(native))
+    def fromNative(native: Pointer): Try[MemoryMapping] = Try(new MemoryMapping(native))
   }
 
   implicit object ShmAllocateResultFromNative
@@ -146,11 +158,11 @@ object FromNative {
     def fromNative(native: LibMemory.ShmAllocateResult): Try[ShmAllocateResult] = Try {
       native.tag.get match {
         case LibMemory.ShmAllocateResult_Tag.AllocationSucceeded => AllocationSucceeded(
-          native.body.get.allocation_succeeded.get._0.fromNative().get)
+          native.body.allocation_succeeded._0.get.fromNative().get)
         case LibMemory.ShmAllocateResult_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
-          native.body.get.digest_did_not_match.get._0.fromNative().get)
+          native.body.digest_did_not_match._0.fromNative().get)
         case LibMemory.ShmAllocateResult_Tag.AllocationFailed => throw AllocationFailed(
-          native.body.get.allocation_failed.get._0.getString(0))
+          native.body.allocation_failed._0.get.getString(0))
       }
     }
   }
@@ -160,10 +172,10 @@ object FromNative {
     def fromNative(native: LibMemory.ShmRetrieveResult): Try[ShmRetrieveResult] = Try {
       native.tag.get match {
         case LibMemory.ShmRetrieveResult_Tag.RetrieveSucceeded => RetrieveSucceeded(
-          native.body.get.retrieve_succeeded.get._0.fromNative().get)
+          native.body.retrieve_succeeded._0.get.fromNative().get)
         case LibMemory.ShmRetrieveResult_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist
         case LibMemory.ShmRetrieveResult_Tag.RetrieveInternalError => throw RetrieveInternalError(
-          native.body.get.retrieve_internal_error.get._0.getString(0))
+          native.body.retrieve_internal_error._0.get.getString(0))
       }
     }
   }
@@ -175,16 +187,8 @@ object FromNative {
         case LibMemory.ShmDeleteResult_Tag.DeletionSucceeded => DeletionSucceeded
         case LibMemory.ShmDeleteResult_Tag.DeleteDidNotExist => throw DeleteDidNotExist
         case LibMemory.ShmDeleteResult_Tag.DeleteInternalError => throw DeleteInternalError(
-          native.body.get.delete_internal_error.get._0.getString(0))
+          native.body.delete_internal_error._0.get.getString(0))
       }
     }
   }
-}
-
-case class MMap(pointer: Pointer)
-
-object MMap {
-
-
-  def parseResult(shmResult: ShmResult): Try[MMap] = ShmResult
 }

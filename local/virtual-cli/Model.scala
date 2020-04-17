@@ -1,10 +1,11 @@
 package upc.local.virtual_cli
 
+import upc.local.memory.MemoryMapping
+
 import ammonite.ops._
 
-import java.io.{InputStream => JavaInputStream, OutputStream => JavaOutputStream, IOException}
+import java.io.{InputStream => JavaInputStream, OutputStream => JavaOutputStream}
 import scala.collection.mutable
-import scala.util.Try
 
 
 trait Readable extends JavaInputStream {
@@ -46,25 +47,9 @@ trait Writable extends JavaOutputStream {
 }
 
 
-sealed abstract class FileError(message: String) extends IOException(message)
-case class InvalidSeek(message: String) extends FileError(message)
-
-
-case class SeekPosition(offset: Int) {
-  if (offset < 0) {
-    throw InvalidSeek(s"negative seek position: $this")
-  }
-}
-
-case class ReadLength(length: Int) {
-  if (length < 0) {
-    throw InvalidSeek(s"negative read length: $this")
-  }
-}
-
 trait FileContent {
-  def content: Array[Byte]
-  def seekTo(seekPosition: SeekPosition, readLength: ReadLength): Array[Byte]
+  def contentCopy: Array[Byte]
+  def readFrom(offset: Long, output: Array[Byte]): Int
 }
 
 trait MutableChildren[PathType, EntryType] {
@@ -73,12 +58,11 @@ trait MutableChildren[PathType, EntryType] {
 
 sealed abstract class DirEntry
 
-case class File(bytes: Array[Byte]) extends DirEntry
+case class File(bytes: MemoryMapping) extends DirEntry
     with FileContent {
-  override def content: Array[Byte] = bytes
+  override def contentCopy: Array[Byte] = bytes.getBytesCopy
 
-  override def seekTo(seek_position: SeekPosition, readLength: ReadLength): Array[Byte] =
-    content.slice(seek_position.offset, readLength.length)
+  override def readFrom(offset: Long, output: Array[Byte]): Int = bytes.readBytesAt(offset, output)
 }
 
 case class Directory(childrenMap: mutable.Map[RelPath, DirEntry]) extends DirEntry

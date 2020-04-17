@@ -1,5 +1,7 @@
 package upc.local.virtual_cli
 
+import upc.local.memory.MemoryMapping
+
 import ammonite.ops._
 
 import java.io.{IOException, Closeable, ByteArrayOutputStream}
@@ -72,7 +74,7 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
 
   val openedPathMapping: mutable.Map[OpenedFile, Path] = mutable.Map.empty
   val fdMapping: mutable.Map[OpenedFile, File] = mutable.Map.empty
-  val fdSeekPositions: mutable.Map[OpenedFile, SeekPosition] = mutable.Map.empty
+  val fdSeekPositions: mutable.Map[OpenedFile, Long] = mutable.Map.empty
   val pendingWrites: mutable.Map[OpenedFile, WritableFile] = mutable.Map.empty
 
   override def openFile(path: Path): Try[OpenedFile] = Try {
@@ -82,7 +84,7 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
         val descriptor = OpenedFile(new FD)
         openedPathMapping(descriptor) = path
         fdMapping(descriptor) = x
-        fdSeekPositions(descriptor) = SeekPosition(0)
+        fdSeekPositions(descriptor) = 0
         descriptor
       }
       case Some(x) => throw WrongEntryType(s"result $x was not a file")
@@ -113,18 +115,15 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
   override def currentFileMapping: FileMapping = fileMapping
 
   def readAll(openedFile: OpenedFile): Array[Byte] = this.synchronized {
-    getFile(openedFile).content
+    getFile(openedFile).contentCopy
   }
   def readBytesAt(openedFile: OpenedFile, output: Array[Byte]): Int = this.synchronized {
-    val readLength = ReadLength(output.length)
-    val sliced = getFile(openedFile).seekTo(getSeek(openedFile), readLength)
-    sliced.copyToArray(output)
-    sliced.length
+    getFile(openedFile).readFrom(getSeek(openedFile), output)
   }
 
   def getFile(openedFile: OpenedFile): File = fdMapping(openedFile)
   def getPath(openedFile: OpenedFile): Path = openedPathMapping(openedFile)
-  def getSeek(openedFile: OpenedFile): SeekPosition = fdSeekPositions(openedFile)
+  def getSeek(openedFile: OpenedFile): Long = fdSeekPositions(openedFile)
 
   def closeFile(openedFile: OpenedFile): Unit = this.synchronized {
     openedPathMapping -= openedFile
@@ -143,7 +142,7 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
 class FileHandle(openedFile: OpenedFile, vfs: DescriptorTrackingVFS) {
   def getFile(): File = vfs.getFile(openedFile)
   def getPath(): Path = vfs.getPath(openedFile)
-  def getSeek(): SeekPosition = vfs.getSeek(openedFile)
+  def getSeek(): Long = vfs.getSeek(openedFile)
 
   def readBytesAt(output: Array[Byte]): Int = vfs.readBytesAt(openedFile, output)
   def readAll(): Array[Byte] = vfs.readAll(openedFile)
@@ -167,5 +166,5 @@ class WritableFile(handle: FileHandle) extends Writable with Closeable {
 
   override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
 
-  override def close(): Unit = handle.closeForWrite(File(sink.toByteArray))
+  override def close(): Unit = handle.closeForWrite(File(MemoryMapping.fromArray(sink.toByteArray)))
 }

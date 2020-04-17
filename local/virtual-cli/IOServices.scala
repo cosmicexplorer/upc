@@ -1,6 +1,6 @@
 package upc.local.virtual_cli
 
-import upc.local.{Digest, DirectoryDigest, ExitCode, FileDigest, IOFinalState}
+import upc.local.{Digest, DirectoryDigest, ExitCode, FileDigest, IOFinalState, CompleteVirtualizedProcessResult}
 import upc.local.ViaThrift._
 import upc.local.thrift_java.directory
 import upc.local.thrift_java.file

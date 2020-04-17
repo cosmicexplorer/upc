@@ -5,7 +5,6 @@ import org.apache.thrift.transport.TSocket
 import org.newsclub.net.unix.{AFUNIXSocket, AFUNIXSocketAddress}
 
 import java.io.{Closeable => JavaCloseable}
-import scala.concurrent.{blocking, ExecutionContext, Future}
 
 
 class ThriftUnixSocket(path: Path) extends JavaCloseable {

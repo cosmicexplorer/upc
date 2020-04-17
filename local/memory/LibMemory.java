@@ -5,51 +5,170 @@ import jnr.ffi.types.*;
 
 
 public class LibMemory {
-  public static LibMemoryIface libMemoryInstance =
+  public static final LibMemoryIface libMemoryInstance =
     LibraryLoader.create(LibMemoryIface.class).load("memory");
-  public static jnr.ffi.Runtime runtime = jnr.ffi.Runtime.getRuntime(libMemoryInstance);
+  public static final jnr.ffi.Runtime runtime = jnr.ffi.Runtime.getRuntime(libMemoryInstance);
 
-  public interface LibMemoryIface {
+  public static class Error extends Exception {
+    public Error(String message) {
+      super(message);
+    }
+    public Error(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  public static interface LibMemoryIface {
     public ShmAllocateResult shm_allocate(ShmAllocateRequest request);
     public ShmRetrieveResult shm_retrieve(ShmRetrieveRequest request);
     public ShmDeleteResult shm_delete(ShmDeleteRequest request);
   }
 
   // common types!
-  public class Fingerprint extends Struct {
-    public final u_int8_t[] _0 = arrayOf(runtime, u_int8_t.class, 32);
+  public static class FingerprintError extends Error {
+    public FingerprintError(String message) {
+      super(message);
+    }
+    public FingerprintError(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+  public static class Fingerprint extends Struct {
+    public final Padding _0;
+
+    public static final int FINGERPRINT_LENGTH = 32;
 
     public Fingerprint() {
       super(runtime);
+      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
+    }
+
+    public Fingerprint(byte[] bytes) throws FingerprintError {
+      super(runtime);
+      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
+      setBytes(bytes);
+    }
+
+    public Fingerprint(Fingerprint otherFingerprint) throws FingerprintError {
+      super(runtime);
+      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
+      copyFrom(otherFingerprint);
+    }
+
+    public void setBytes(byte[] bytes) throws FingerprintError {
+      if (bytes.length != FINGERPRINT_LENGTH) {
+        throw new FingerprintError("fingerprint bytes must be " +
+                                   Integer.toString(FINGERPRINT_LENGTH) +
+                                   " bytes long -- instead received + " +
+                                   Integer.toString(bytes.length));
+      }
+      jnr.ffi.Pointer paddingBytes = _0.getMemory();
+      paddingBytes.put(0, bytes, 0, bytes.length);
+    }
+
+    public byte[] getBytesCopy() {
+      byte[] bytes = new byte[FINGERPRINT_LENGTH];
+      jnr.ffi.Pointer paddingBytes = _0.getMemory();
+      paddingBytes.get(0, bytes, 0, FINGERPRINT_LENGTH);
+      return bytes;
+    }
+
+    /* FIXME: can we avoid bubbling up `throws FingerprintError` here since we know that the other
+     * fingerprint will have the correct number of bytes? */
+    public void copyFrom(Fingerprint otherFingerprint) throws FingerprintError {
+      byte[] otherBytes = otherFingerprint.getBytesCopy();
+      setBytes(otherBytes);
     }
   }
 
-  public class ShmKey extends Struct {
-    public final Fingerprint fingerprint = new Fingerprint();
-    public final u_int32_t length = new u_int32_t();
+  public static class ShmKeyError extends Error {
+    public ShmKeyError(String message) {
+      super(message);
+    }
+    public ShmKeyError(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+  public static class ShmKey extends Struct {
+    public final Fingerprint fingerprint;
+    public final u_int32_t length;
 
     public ShmKey() {
       super(runtime);
+      fingerprint = new Fingerprint();
+      length = new u_int32_t();
+    }
+
+    public ShmKey(Fingerprint fingerprintArg, long lengthArg) throws ShmKeyError {
+      super(runtime);
+      fingerprint = new Fingerprint();
+      length = new u_int32_t();
+      setFingerprint(fingerprintArg);
+      setLength(lengthArg);
+    }
+
+    public ShmKey(ShmKey otherShmKey) throws ShmKeyError {
+      super(runtime);
+      fingerprint = new Fingerprint();
+      length = new u_int32_t();
+      copyFrom(otherShmKey);
+    }
+
+    public void setFingerprint(Fingerprint otherFingerprint) throws ShmKeyError {
+      try {
+        fingerprint.copyFrom(otherFingerprint);
+      } catch (FingerprintError e) {
+        throw new ShmKeyError("fingerprint encoding error", e);
+      }
+    }
+
+    public Fingerprint getFingerprint() {
+      return fingerprint;
+    }
+
+    public void setLength(long otherLength) throws ShmKeyError {
+      if (otherLength < 0) {
+        throw new ShmKeyError("length cannot be negative -- was " + Long.toString(otherLength));
+      }
+      length.set(otherLength);
+    }
+
+    public long getLength() {
+      return length.get();
+    }
+
+    public void copyFrom(ShmKey otherShmKey) throws ShmKeyError {
+      setFingerprint(otherShmKey.getFingerprint());
+      setLength(otherShmKey.getLength());
     }
   }
 
   // shm_allocate() types!
-  public class ShmAllocateRequest extends Struct {
-    public final ShmKey key = new ShmKey();
-    public final Pointer source = new Pointer();
+  public static class ShmAllocateRequest extends Struct {
+    public final ShmKey key;
+    public final Pointer source;
 
     public ShmAllocateRequest() {
       super(runtime);
+      key = new ShmKey();
+      source = new Pointer();
+    }
+
+    public ShmAllocateRequest(ShmKey keyArg, jnr.ffi.Pointer sourceArg) {
+      super(runtime);
+      key = keyArg;
+      source = new Pointer();
+      source.set(sourceArg);
     }
   }
 
-  public enum ShmAllocateResult_Tag {
+  public static enum ShmAllocateResult_Tag {
     AllocationSucceeded,
     DigestDidNotMatch,
     AllocationFailed,
   }
 
-  public class AllocationSucceeded_Body extends Struct {
+  public static class AllocationSucceeded_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public AllocationSucceeded_Body() {
@@ -57,7 +176,7 @@ public class LibMemory {
     }
   }
 
-  public class DigestDidNotMatch_Body extends Struct {
+  public static class DigestDidNotMatch_Body extends Struct {
     public final ShmKey _0 = new ShmKey();
 
     public DigestDidNotMatch_Body() {
@@ -65,7 +184,7 @@ public class LibMemory {
     }
   }
 
-  public class AllocationFailed_Body extends Struct {
+  public static class AllocationFailed_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public AllocationFailed_Body() {
@@ -73,8 +192,8 @@ public class LibMemory {
     }
   }
 
-  public class ShmAllocateResult_Body extends Union {
-    public final AllocationSucceeded_Body allocation_succeeded = new Succeeded_Body();
+  public static class ShmAllocateResult_Body extends Union {
+    public final AllocationSucceeded_Body allocation_succeeded = new AllocationSucceeded_Body();
     public final DigestDidNotMatch_Body digest_did_not_match = new DigestDidNotMatch_Body();
     public final AllocationFailed_Body allocation_failed = new AllocationFailed_Body();
 
@@ -83,7 +202,7 @@ public class LibMemory {
     }
   }
 
-  public class ShmAllocateResult extends Struct {
+  public static class ShmAllocateResult extends Struct {
     public final Enum8<ShmAllocateResult_Tag> tag =
       new Enum8<ShmAllocateResult_Tag>(ShmAllocateResult_Tag.class);
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
@@ -95,21 +214,27 @@ public class LibMemory {
   }
 
   // shm_retrieve() types!
-  public class ShmRetrieveRequest extends Struct {
-    public final ShmKey key = new ShmKey();
+  public static class ShmRetrieveRequest extends Struct {
+    public final ShmKey key;
 
     public ShmRetrieveRequest() {
       super(runtime);
+      key = new ShmKey();
+    }
+
+    public ShmRetrieveRequest(ShmKey keyArg) {
+      super(runtime);
+      key = keyArg;
     }
   }
 
-  public enum ShmRetrieveResult_Tag {
+  public static enum ShmRetrieveResult_Tag {
     RetrieveSucceeded,
     RetrieveDidNotExist,
     RetrieveInternalError,
   }
 
-  public class RetrieveSucceeded_Body extends Struct {
+  public static class RetrieveSucceeded_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public RetrieveSucceeded_Body() {
@@ -117,7 +242,7 @@ public class LibMemory {
     }
   }
 
-  public class RetrieveInternalError_Body extends Struct {
+  public static class RetrieveInternalError_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public RetrieveInternalError_Body() {
@@ -125,7 +250,7 @@ public class LibMemory {
     }
   }
 
-  public class ShmRetrieveResult_Body extends Union {
+  public static class ShmRetrieveResult_Body extends Union {
     public final RetrieveSucceeded_Body retrieve_succeeded = new RetrieveSucceeded_Body();
     public final RetrieveInternalError_Body retrieve_internal_error =
       new RetrieveInternalError_Body();
@@ -135,7 +260,7 @@ public class LibMemory {
     }
   }
 
-  public class ShmRetrieveResult extends Struct {
+  public static class ShmRetrieveResult extends Struct {
     public final Enum8<ShmRetrieveResult_Tag> tag =
       new Enum8<ShmRetrieveResult_Tag>(ShmRetrieveResult_Tag.class);
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
@@ -147,21 +272,27 @@ public class LibMemory {
   }
 
   // shm_delete() types!
-  public class ShmDeleteRequest extends Struct {
-    public final ShmKey key = new ShmKey();
+  public static class ShmDeleteRequest extends Struct {
+    public final ShmKey key;
 
     public ShmDeleteRequest() {
       super(runtime);
+      key = new ShmKey();
+    }
+
+    public ShmDeleteRequest(ShmKey keyArg) {
+      super(runtime);
+      key = keyArg;
     }
   }
 
-  public enum ShmDeleteResult_Tag {
+  public static enum ShmDeleteResult_Tag {
     DeletionSucceeded,
     DeleteDidNotExist,
     DeleteInternalError,
   }
 
-  public class DeleteSucceeded_Body extends Struct {
+  public static class DeleteSucceeded_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public DeleteSucceeded_Body() {
@@ -169,7 +300,7 @@ public class LibMemory {
     }
   }
 
-  public class DeleteInternalError_Body extends Struct {
+  public static class DeleteInternalError_Body extends Struct {
     public final Pointer _0 = new Pointer();
 
     public DeleteInternalError_Body() {
@@ -177,7 +308,7 @@ public class LibMemory {
     }
   }
 
-  public class ShmDeleteResult_Body extends Union {
+  public static class ShmDeleteResult_Body extends Union {
     public final DeleteInternalError_Body delete_internal_error =
       new DeleteInternalError_Body();
 
@@ -186,7 +317,7 @@ public class LibMemory {
     }
   }
 
-  public class ShmDeleteResult extends Struct {
+  public static class ShmDeleteResult extends Struct {
     public final Enum8<ShmDeleteResult_Tag> tag =
       new Enum8<ShmDeleteResult_Tag>(ShmDeleteResult_Tag.class);
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!

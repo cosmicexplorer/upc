@@ -1,5 +1,6 @@
 package upc.local.virtual_cli
 
+import upc.local.ExitCode
 import upc.local.thrift_java.process_execution.{ExecuteProcessResult, ProcessReapService}
 
 import ammonite.ops._
@@ -143,7 +144,6 @@ trait VirtualizationImplementation {
 
 
 trait MainWrapper extends VirtualizationImplementation {
-  val DIRECTORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_DIRECTORY_SERVICE_THRIFT_SOCKET_PATH"
   val PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH"
 
   val EXECUTOR_NUM_THREADS_ENV_VAR = "UPC_EXECUTOR_NUM_THREADS"
@@ -179,11 +179,9 @@ trait MainWrapper extends VirtualizationImplementation {
   }
 
   override def acquireIOServicesConfig(): Try[IOServicesConfig] = for {
-    directoryServicePath <- extractEnvVarPath(DIRECTORY_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     processReapServicePath <- extractEnvVarPath(PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     executor <- createExecutionContext()
   } yield new IOServicesConfig(
-    directoryServicePath = directoryServicePath,
     processReapServicePath = processReapServicePath,
     executor = executor,
   )

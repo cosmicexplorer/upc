@@ -3,7 +3,9 @@ scala_library(
     '3rdparty/jvm:ammonite-ops',
     '3rdparty/jvm:junixsocket',
     '3rdparty/jvm:nailgun-server',
+    'local',
     'local/src/thrift',
+    'local/memory',
   ],
 )
 

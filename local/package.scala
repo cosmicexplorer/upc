@@ -27,7 +27,7 @@ case class Digest(fingerprint: String, sizeBytes: Long) {
 object Digest {
   val EMPTY_FINGERPRINT: String = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-  def empty: Digest = apply(EMPTY_FINGERPRINT, 0).get
+  def empty: Digest = apply(EMPTY_FINGERPRINT, 0)
 }
 
 case class DirectoryDigest(digest: Digest)
@@ -36,7 +36,7 @@ case class FileDigest(digest: Digest)
 
 case class MemoryMappedRegionId(id: String)
 
-case class LocalSlice(id: MemoryMappedRegionId, sizeBytes: Int) {
+case class LocalSlice(id: MemoryMappedRegionId, sizeBytes: Long) {
   if (sizeBytes < 0) {
     throw BadSlice(s"sizeBytes for local slice with id $id was negative! was: $sizeBytes")
   }
@@ -116,8 +116,8 @@ object ViaThrift {
 
   implicit object LocalSliceViaThrift extends ViaThrift[file.LocalSlice, LocalSlice] {
     def fromThrift(thrift: file.LocalSlice): Try[LocalSlice] = Try {
-      val id: file.MemoryMappedRegionId = thrift.getId.fromThrift().get
-      val sizeBytes: Int = thrift.getSize_bytes
+      val id: MemoryMappedRegionId = thrift.getId.fromThrift().get
+      val sizeBytes: Long = thrift.getSize_bytes
       LocalSlice(id, sizeBytes)
     }
     def toThrift(self: LocalSlice): file.LocalSlice = {
