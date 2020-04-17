@@ -142,6 +142,10 @@
 #define S_IXUSR 64
 
 typedef struct {
+  uint8_t _0[32];
+} Fingerprint;
+
+typedef struct {
   Fingerprint fingerprint;
   uint64_t size_bytes;
 } ShmKey;
@@ -153,7 +157,7 @@ typedef enum {
 } ShmAllocateResult_Tag;
 
 typedef struct {
-  void *_0;
+  const void *_0;
 } AllocationSucceeded_Body;
 
 typedef struct {
@@ -179,13 +183,34 @@ typedef struct {
 } ShmAllocateRequest;
 
 typedef enum {
+  DeletionSucceeded,
+  DeleteDidNotExist,
+  DeleteInternalError,
+} ShmDeleteResult_Tag;
+
+typedef struct {
+  char *_0;
+} DeleteInternalError_Body;
+
+typedef struct {
+  ShmDeleteResult_Tag tag;
+  union {
+    DeleteInternalError_Body delete_internal_error;
+  };
+} ShmDeleteResult;
+
+typedef struct {
+  ShmKey key;
+} ShmDeleteRequest;
+
+typedef enum {
   RetrieveSucceeded,
   RetrieveDidNotExist,
   RetrieveInternalError,
 } ShmRetrieveResult_Tag;
 
 typedef struct {
-  void *_0;
+  const void *_0;
 } RetrieveSucceeded_Body;
 
 typedef struct {
@@ -257,6 +282,8 @@ typedef struct {
 } __shmid_ds_new;
 
 ShmAllocateResult allocate_shm(ShmAllocateRequest request);
+
+ShmDeleteResult delete_shm(ShmDeleteRequest request);
 
 ShmRetrieveResult retrieve_shm(ShmRetrieveRequest request);
 

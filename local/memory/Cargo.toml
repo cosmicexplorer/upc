@@ -9,6 +9,9 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }
+lazy_static = "1"
+parking_lot = "0.10"
+uuid = { version = "0.8", features = ["v4"] }
 
 [build-dependencies]
 bindgen = "0.53.2"

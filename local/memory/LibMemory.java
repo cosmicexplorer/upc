@@ -9,12 +9,9 @@ public class LibMemory {
   public static jnr.ffi.Runtime runtime = jnr.ffi.Runtime.getRuntime(libMemoryInstance);
 
   public interface LibMemoryIface {
-    public ShmResult allocate_shm(ShmRequest request);
-  }
-
-  public enum Permission {
-    Read,
-    Write,
+    public ShmAllocateResult allocate_shm(ShmAllocateRequest request);
+    public ShmRetrieveResult retrieve_shm(ShmRetrieveRequest request);
+    public ShmDeleteResult delete_shm(ShmDeleteRequest request);
   }
 
   public class ShmKey extends Struct {
