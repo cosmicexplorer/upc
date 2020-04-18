@@ -445,6 +445,39 @@ mod tests {
   }
 
   #[test]
+  fn shm_allocate_bad_digest() {
+    let random_source = Uuid::new_v4();
+    let source_bytes: &[u8] = random_source.as_bytes();
+
+    let bad_source = Uuid::new_v4();
+    let bad_bytes: &[u8] = bad_source.as_bytes();
+
+    assert_ne!(random_source, bad_source);
+    assert_ne!(source_bytes, bad_bytes);
+
+    let good_digest = Digest::of_bytes(source_bytes);
+    let good_key: ShmKey = good_digest.into();
+
+    let bad_digest = Digest::of_bytes(bad_bytes);
+    let bad_key: ShmKey = bad_digest.into();
+
+    assert_ne!(good_digest, bad_digest);
+    assert_ne!(good_key, bad_key);
+
+    let bad_allocate_request = ShmAllocateRequest {
+      key: bad_key,
+      source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(source_bytes.as_ptr()) },
+    };
+
+    match unsafe { shm_allocate(bad_allocate_request) } {
+      ShmAllocateResult::DigestDidNotMatch(correct_key) => {
+        assert_eq!(correct_key, good_key);
+      }
+      _ => unreachable!(),
+    }
+  }
+
+  #[test]
   fn shm_allocate_retrieve_delete_end_to_end() {
     let random_source = Uuid::new_v4();
     let source_bytes: &[u8] = random_source.as_bytes();

@@ -11,6 +11,25 @@ walkdir = "2"
 [dependencies]
 thrift = "0.13.0"
 
+
+[workspace]
+# These are the packages which are built/tested when the --all flag is passed to cargo.
+#
+# We need to explicitly list these, because otherwise the standalone tools
+# (e.g. fs_util) won't be included when we build/test things.
+members = [
+  ".",
+  "memory",
+  "directory",
+]
+
+default-members = [
+  ".",
+  "memory",
+  "directory",
+]
+
+
 [patch.crates-io]
 # TODO: Remove patch when we can upgrade to an official released version of protobuf with a fix.
 # See: https://github.com/pantsbuild/pants/issues/7760 for context.

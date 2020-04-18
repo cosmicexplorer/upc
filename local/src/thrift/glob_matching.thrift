@@ -1,8 +1,6 @@
 namespace rs upc.local.thrift_rust.glob_matching
 namespace java upc.local.thrift_java.glob_matching
 
-include "directory.thrift"
-
 
 struct SinglePathGlob {
   1: optional string glob,
@@ -18,7 +16,7 @@ struct ExpandGlobsRequest {
 // TODO: make this ExpandGlobsAsyncResult and return a token to allow for greater parallelism when
 // invoking processes that depend on the result of a glob expansion!!
 struct ExpandGlobsResult {
-  1: optional directory.DirectoryDigest directory_digest,
+  // 1: optional directory.DirectoryDigest directory_digest,
 }
 
 enum GlobMatchingErrorCode {
