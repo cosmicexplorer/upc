@@ -414,7 +414,9 @@ impl Into<remexec::Directory> for MerkleTrieNode {
   }
 }
 impl MerkleTrieNode {
-  pub fn recursively_upload_trie(trie: MerkleTrie) -> BoxFuture<MerkleTrieNode, DirectoryFFIError> {
+  pub fn recursively_upload_trie(
+    trie: MerkleTrie,
+  ) -> BoxFuture<DirectoryDigest, DirectoryFFIError> {
     let mut files: Vec<(PathComponent, ShmKey)> = Vec::new();
     let mut sub_tries: Vec<(PathComponent, MerkleTrie)> = Vec::new();
 
@@ -439,19 +441,11 @@ impl MerkleTrieNode {
       sub_tries
         .into_iter()
         .map(|(component, sub_trie)| {
-          let serialized_directory: BoxFuture<remexec::Directory, _> =
+          let serialized_directory: BoxFuture<DirectoryDigest, _> =
             Self::recursively_upload_trie(sub_trie)
               .map(|d| d.into())
               .to_boxed();
-          let directory_digest: BoxFuture<DirectoryDigest, _> = serialized_directory
-            .and_then(|serialized_directory| {
-              (*LOCAL_STORE)
-                .record_directory(&serialized_directory, true)
-                .map_err(|e| e.into())
-                .map(|d| d.into())
-            })
-            .to_boxed();
-          directory_digest
+          serialized_directory
             .map(|directory_digest| DirectoryNode {
               name: component.extract_component_string(),
               digest: directory_digest,
@@ -462,12 +456,24 @@ impl MerkleTrieNode {
     )
     .to_boxed();
 
-    mapped_dir_nodes
+    let directory_proto: BoxFuture<remexec::Directory, _> = mapped_dir_nodes
       .map(|directories| MerkleTrieNode {
         files: mapped_file_nodes,
         directories,
       })
-      .to_boxed()
+      .map(|node| node.into())
+      .to_boxed();
+
+    let directory_digest: BoxFuture<DirectoryDigest, _> = directory_proto
+      .and_then(|directory_proto| {
+        (*LOCAL_STORE)
+          .record_directory(&directory_proto, true)
+          .map_err(|e| e.into())
+          .map(|d| d.into())
+      })
+      .to_boxed();
+
+    directory_digest
   }
 }
 
