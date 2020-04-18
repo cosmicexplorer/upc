@@ -22,7 +22,7 @@
 // Arc<Mutex> can be more clear than needing to grok Orderings:
 #![allow(clippy::mutex_atomic)]
 
-use memory::shm::{ShmHandle, ShmKey};
+use memory::shm::ShmKey;
 
 use bazel_protos::remote_execution as remexec;
 use boxfuture::{BoxFuture, Boxable};
@@ -30,11 +30,7 @@ use hashing::{Digest, Fingerprint};
 use store::Store;
 use task_executor::Executor;
 
-use bytes::Bytes;
-use futures::{
-  channel::oneshot,
-  future::{self, FutureExt},
-};
+use futures01::{future, Future};
 use indexmap::IndexMap;
 use lazy_static::lazy_static;
 use protobuf;
@@ -42,14 +38,11 @@ use protobuf;
 use std::convert::{From, Into};
 use std::env;
 use std::ffi::OsStr;
-use std::future::Future;
 use std::mem;
 use std::os::{self, unix::ffi::OsStrExt};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::slice;
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 
 lazy_static! {
   static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
@@ -81,7 +74,6 @@ pub struct DirectoryDigest {
   pub fingerprint: Fingerprint,
   pub size_bytes: u64,
 }
-
 impl From<Digest> for DirectoryDigest {
   fn from(digest: Digest) -> Self {
     let Digest(fingerprint, size_bytes) = digest;
@@ -91,7 +83,6 @@ impl From<Digest> for DirectoryDigest {
     }
   }
 }
-
 impl Into<Digest> for DirectoryDigest {
   fn into(self: Self) -> Digest {
     let DirectoryDigest {
@@ -130,60 +121,37 @@ impl ChildRelPath {
     let slice: &[u8] = path.as_os_str().as_bytes();
     let relpath: *const os::raw::c_char =
       mem::transmute::<*const u8, *const os::raw::c_char>(slice.as_ptr());
-    ChildRelPath {
+    &ChildRelPath {
       relpath,
       relpath_size: slice.len() as u64,
     }
   }
 }
 
+/* FIXME: remove all directories from path stats!!! all path stats *strictly* just contain file
+ * paths!! directory paths are *INFERRED*!!!! */
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub enum SinglePathStat {
-  FileStat(ChildRelPath, ShmKey),
-  DirectoryStat(ChildRelPath, DirectoryDigest),
-}
-impl SinglePathStat {
-  pub unsafe fn as_safe(&self) -> &SafePathStat {
-    match self {
-      Self::FileStat(rel_path, key) => SafePathStat::FileStat(rel_path.as_path(), key),
-      Self::DirectoryStat(rel_path, digest) => {
-        SafePathStat::DirectoryStat(rel_path.as_path(), digest)
-      }
-    }
-  }
-}
-
-pub enum SafePathStat {
-  FileStat(Path, ShmKey),
-  DirectoryStat(Path, DirectoryDigest),
-}
-impl SafePathStat {
-  pub unsafe fn as_native(&self) -> &SinglePathStat {
-    match self {
-      Self::FileStat(path, key) => SinglePathStat::FileStat(ChildRelPath::from_path(path), key),
-      Self::DirectoryStat(path, digest) => {
-        SinglePathStat::DirectoryStat(ChildRelPath::from_path(path), digest)
-      }
-    }
-  }
+pub struct FileStat {
+  pub rel_path: ChildRelPath,
+  pub key: ShmKey,
 }
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct PathStats {
-  stats: *const SinglePathStat,
+  stats: *const FileStat,
   num_stats: u64,
 }
 impl PathStats {
-  pub fn from_slice(stats: &[SinglePathStat]) -> &Self {
+  pub fn from_slice(stats: &[FileStat]) -> &Self {
     let num_stats = stats.len();
-    PathStats {
+    &PathStats {
       stats: stats.as_ptr(),
       num_stats: num_stats as u64,
     }
   }
-  pub unsafe fn safe_slice(&self) -> &[SafePathStat] {
+  pub unsafe fn as_slice(&self) -> &[FileStat] {
     slice::from_raw_parts(self.stats, self.num_stats as usize)
   }
 }
@@ -194,6 +162,42 @@ pub enum FilePermissions {
   None,
 }
 
+/* Necessary to mediate conversions between the remexec digest our own digests. */
+struct RemexecDigestWrapper {
+  pub fingerprint: Fingerprint,
+  pub size_bytes: usize,
+}
+impl From<remexec::Digest> for RemexecDigestWrapper {
+  fn from(digest: remexec::Digest) -> Self {
+    RemexecDigestWrapper {
+      fingerprint: Fingerprint::from_hex_string(&digest.hash).unwrap(),
+      size_bytes: digest.size_bytes as usize,
+    }
+  }
+}
+impl Into<remexec::Digest> for RemexecDigestWrapper {
+  fn into(self: Self) -> remexec::Digest {
+    let mut ret = remexec::Digest::new();
+    ret.set_hash(self.fingerprint.to_hex());
+    ret.set_size_bytes(self.size_bytes as i64);
+    ret
+  }
+}
+impl From<Digest> for RemexecDigestWrapper {
+  fn from(digest: Digest) -> Self {
+    let Digest(fingerprint, size_bytes) = digest;
+    RemexecDigestWrapper {
+      fingerprint,
+      size_bytes,
+    }
+  }
+}
+impl Into<Digest> for RemexecDigestWrapper {
+  fn into(self: Self) -> Digest {
+    Digest(self.fingerprint, self.size_bytes)
+  }
+}
+
 #[derive(Debug)]
 pub struct FileNode {
   pub name: String,
@@ -202,10 +206,13 @@ pub struct FileNode {
 }
 impl From<remexec::FileNode> for FileNode {
   fn from(node: remexec::FileNode) -> Self {
+    let digest_wrapper: RemexecDigestWrapper = node.get_digest().clone().into();
+    let digest: Digest = digest_wrapper.into();
+    let key: ShmKey = digest.into();
     FileNode {
       name: node.get_name().to_string(),
-      key: node.get_digest().into(),
-      permissions: match node.get_is_executable {
+      key,
+      permissions: match node.get_is_executable() {
         true => FilePermissions::Executable,
         false => FilePermissions::None,
       },
@@ -221,7 +228,9 @@ impl Into<remexec::FileNode> for FileNode {
     } = self;
     let mut ret = remexec::FileNode::new();
     ret.set_name(name);
-    ret.set_digest(key.into());
+    let digest: Digest = key.into();
+    let digest_wrapper: RemexecDigestWrapper = digest.into();
+    ret.set_digest(digest_wrapper.into());
     ret.set_is_executable(match permissions {
       FilePermissions::Executable => true,
       FilePermissions::None => false,
@@ -237,22 +246,27 @@ pub struct DirectoryNode {
 }
 impl From<remexec::DirectoryNode> for DirectoryNode {
   fn from(node: remexec::DirectoryNode) -> Self {
+    let digest_wrapper: RemexecDigestWrapper = node.get_digest().clone().into();
+    let digest: Digest = digest_wrapper.into();
     DirectoryNode {
       name: node.get_name().to_string(),
-      digest: node.get_digest().into(),
+      digest: digest.into(),
     }
   }
 }
 impl Into<remexec::DirectoryNode> for DirectoryNode {
   fn into(self: Self) -> remexec::DirectoryNode {
     let DirectoryNode { name, digest } = self;
+    let digest: Digest = digest.into();
+    let digest_wrapper: RemexecDigestWrapper = digest.into();
     let mut ret = remexec::DirectoryNode::new();
     ret.set_name(name);
-    ret.set_digest(digest.into());
+    ret.set_digest(digest_wrapper.into());
     ret
   }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct PathComponent {
   component: String,
 }
@@ -267,11 +281,16 @@ impl PathComponent {
         .into(),
       )
     } else {
-      PathComponent { component }
+      Ok(PathComponent { component })
     }
+  }
+
+  pub fn extract_component_string(self) -> String {
+    self.component
   }
 }
 
+#[derive(Debug)]
 struct MerkleTrie {
   map: IndexMap<PathComponent, MerkleTrieEntry>,
 }
@@ -280,6 +299,10 @@ impl MerkleTrie {
     MerkleTrie {
       map: IndexMap::new(),
     }
+  }
+
+  pub fn extract_mapping(self) -> IndexMap<PathComponent, MerkleTrieEntry> {
+    self.map
   }
 
   pub fn from(map: IndexMap<PathComponent, MerkleTrieEntry>) -> Self {
@@ -291,30 +314,15 @@ impl MerkleTrie {
     rel_path: &Path,
     terminal: MerkleTrieTerminalEntry,
   ) -> Result<(), DirectoryFFIError> {
-    if !rel_path.is_relative() {
-      return Err(
-        format!(
-          "path {:?} was expected to be relative when indexing into merkle trie {:?}",
-          rel_path, self,
-        )
-        .into(),
-      );
-    }
+    assert!(rel_path.is_relative());
 
     let all_components: Vec<PathComponent> = rel_path
       .components()
-      .map(PathComponent::from)
-      .collect::<Result<Vec<PathComponent>, DirectoryFFIError>>(
-    )?;
+      .map(|component| PathComponent::from(component.as_os_str().to_string_lossy().to_string()))
+      .collect::<Result<Vec<PathComponent>, DirectoryFFIError>>()?;
 
     match all_components.split_last() {
-      None => Err(
-        format!(
-          "path {:?} without any components provided when indexing into merkle trie {:?}",
-          rel_path, self,
-        )
-        .into(),
-      ),
+      None => unreachable!(),
       Some((last_component, intermediate_components)) => {
         let mut cur_trie: &mut Self = &mut self;
 
@@ -322,7 +330,7 @@ impl MerkleTrie {
         for component in intermediate_components.iter() {
           let cur_trie_entry = cur_trie
             .map
-            .entry(component)
+            .entry(*component)
             .or_insert_with(|| MerkleTrieEntry::SubTrie(MerkleTrie::new()));
           match &mut *cur_trie_entry {
             MerkleTrieEntry::SubTrie(mut sub_trie) => {
@@ -334,57 +342,46 @@ impl MerkleTrie {
                 *cur_trie_entry, key,
               )));
             }
-            MerkleTrieEntry::Directory(digest) => {
-              return Err(DirectoryFFIError::OverlappingPathStats(format!(
-                "expected sub trie at entry {:?}: got directory for digest {:?} instead!",
-                *cur_trie_entry, digest,
-              )));
-            }
           }
         }
 
+        let last_component = last_component.clone();
         if let Some(existing_entry) = cur_trie.map.get(&last_component) {
           Err(DirectoryFFIError::OverlappingPathStats(format!(
-            "found existing entry {:?} in cur trie {:?} -- should be empty!",
+            "found existing entry {:?} in cur trie {:?} -- should be empty (no file should have the same path in a set of path stats!)!",
             existing_entry, cur_trie,
           )))
         } else {
           let to_insert: MerkleTrieEntry = match terminal {
             MerkleTrieTerminalEntry::File(key) => MerkleTrieEntry::File(key),
-            MerkleTrieTerminalEntry::Directory(digest) => MerkleTrieEntry::Directory(digest),
           };
-          cur_trie.map.insert(&last_component, to_insert);
+          cur_trie.map.insert(last_component, to_insert);
+          Ok(())
         }
-        let final_entry = cur_trie
-          .map
-          .entry(last_component)
-          .or_insert_with(|| MerkleTrieEntry::SubTrie(MerkleTrie::new()));
       }
     }
   }
 
-  pub fn populate(&mut self, path_stats: &[SafePathStat]) -> Result<(), DirectoryFFIError> {
-    for stat in path_stats.iter() {
-      match stat {
-        SafePathStat::FileStat(rel_path, key) => {
-          self.advance_path(rel_path, MerkleTrieTerminalEntry::File(key))?;
-        }
-        SafePathStat::DirectoryStat(rel_path, digest) => {
-          self.advance_path(rel_path, MerkleTrieTerminalEntry::Directory(digest))?;
-        }
-      }
+  pub fn populate(&mut self, path_stats: &[FileStat]) -> Result<(), DirectoryFFIError> {
+    for FileStat { rel_path, key } in path_stats.iter() {
+      self.advance_path(
+        unsafe { rel_path.as_path() },
+        MerkleTrieTerminalEntry::File(*key),
+      )?;
     }
+    Ok(())
   }
 }
 
+#[derive(Debug)]
 enum MerkleTrieEntry {
   File(ShmKey),
   SubTrie(MerkleTrie),
 }
 
+/* This distinct enum is useful, even if there is only one case! */
 enum MerkleTrieTerminalEntry {
   File(ShmKey),
-  Directory(DirectoryDigest),
 }
 
 #[derive(Debug)]
@@ -394,9 +391,12 @@ pub struct MerkleTrieNode {
 }
 impl From<remexec::Directory> for MerkleTrieNode {
   fn from(dir: remexec::Directory) -> Self {
+    let remexec::Directory {
+      files, directories, ..
+    } = dir;
     MerkleTrieNode {
-      files: dir.get_files().iter().map(|n| n.into()).collect(),
-      directories: dir.get_directories().iter().map(|n| n.into()).collect(),
+      files: files.into_iter().map(|n| n.into()).collect(),
+      directories: directories.into_iter().map(|n| n.into()).collect(),
     }
   }
 }
@@ -414,8 +414,60 @@ impl Into<remexec::Directory> for MerkleTrieNode {
   }
 }
 impl MerkleTrieNode {
-  pub async fn recursively_upload_trie(trie: MerkleTrie) -> Result<Self, DirectoryFFIError> {
-    let directory_stack: Vec<p>
+  pub fn recursively_upload_trie(trie: MerkleTrie) -> BoxFuture<MerkleTrieNode, DirectoryFFIError> {
+    let mut files: Vec<(PathComponent, ShmKey)> = Vec::new();
+    let mut sub_tries: Vec<(PathComponent, MerkleTrie)> = Vec::new();
+
+    for (path_component, entry) in trie.extract_mapping().into_iter() {
+      match entry {
+        MerkleTrieEntry::File(key) => files.push((path_component, key)),
+        MerkleTrieEntry::SubTrie(sub_trie) => sub_tries.push((path_component, sub_trie)),
+      }
+    }
+
+    let mapped_file_nodes: Vec<FileNode> = files
+      .into_iter()
+      .map(|(component, key)| FileNode {
+        name: component.extract_component_string(),
+        key,
+        permissions: FilePermissions::None,
+      })
+      .collect();
+
+    /* Recursion!!! */
+    let mapped_dir_nodes: BoxFuture<Vec<DirectoryNode>, _> = future::join_all(
+      sub_tries
+        .into_iter()
+        .map(|(component, sub_trie)| {
+          let serialized_directory: BoxFuture<remexec::Directory, _> =
+            Self::recursively_upload_trie(sub_trie)
+              .map(|d| d.into())
+              .to_boxed();
+          let directory_digest: BoxFuture<DirectoryDigest, _> = serialized_directory
+            .and_then(|serialized_directory| {
+              (*LOCAL_STORE)
+                .record_directory(&serialized_directory, true)
+                .map_err(|e| e.into())
+                .map(|d| d.into())
+            })
+            .to_boxed();
+          directory_digest
+            .map(|directory_digest| DirectoryNode {
+              name: component.extract_component_string(),
+              digest: directory_digest,
+            })
+            .to_boxed()
+        })
+        .collect::<Vec<_>>(),
+    )
+    .to_boxed();
+
+    mapped_dir_nodes
+      .map(|directories| MerkleTrieNode {
+        files: mapped_file_nodes,
+        directories,
+      })
+      .to_boxed()
   }
 }
 
@@ -427,10 +479,10 @@ pub struct ExpandDirectoriesMapping {
   num_expansions: u64,
 }
 impl ExpandDirectoriesMapping {
-  pub fn from_slices(
-    digests: &[DirectoryDigest],
-    expansions: &[PathStats],
-  ) -> Result<&Self, DirectoryFFIError> {
+  pub fn from_slices<'a>(
+    digests: &'a [DirectoryDigest],
+    expansions: &'a [PathStats],
+  ) -> Result<&'a Self, DirectoryFFIError> {
     let num_digests = digests.len();
     let num_expansions = expansions.len();
     if num_digests != num_expansions {
@@ -442,7 +494,7 @@ impl ExpandDirectoriesMapping {
         .into(),
       )
     } else {
-      Ok(ExpandDirectoriesMapping {
+      Ok(&ExpandDirectoriesMapping {
         digests: digests.as_ptr(),
         expansions: expansions.as_ptr(),
         num_expansions: num_expansions as u64,
@@ -497,12 +549,7 @@ pub unsafe extern "C" fn directories_upload(
     .iter()
     .zip(expansions.iter().map(|path_stats| path_stats.as_slice()))
   {
-    for stat in path_stats.iter() {
-      match stat {
-        SinglePathStat::FileStat() => (),
-        SinglePathStat::DirectoryStat() => (),
-      }
-    }
+    for stat in path_stats.iter() {}
   }
 }
 
