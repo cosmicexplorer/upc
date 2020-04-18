@@ -22,7 +22,7 @@
 // Arc<Mutex> can be more clear than needing to grok Orderings:
 #![allow(clippy::mutex_atomic)]
 
-use memory::shm::ShmKey;
+use memory::shm::{CCharErrorMessage, ShmKey};
 
 use bazel_protos::remote_execution as remexec;
 use boxfuture::{BoxFuture, Boxable};
@@ -49,8 +49,9 @@ lazy_static! {
     Some(local_store_dir) => PathBuf::from(local_store_dir),
     None => PathBuf::from(env::var("HOME").unwrap()).join(".cache/pants/lmdb_store"),
   };
+  static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
   static ref LOCAL_STORE: Arc<Store> = {
-    let executor = Executor::new();
+    let executor = PANTS_TOKIO_EXECUTOR.clone();
     let store = Store::local_only(executor, &*LOCAL_STORE_PATH).unwrap();
     Arc::new(store)
   };
@@ -105,6 +106,9 @@ impl ExpandDirectoriesRequest {
   }
 }
 
+unsafe impl Send for ExpandDirectoriesRequest {}
+unsafe impl Sync for ExpandDirectoriesRequest {}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct ChildRelPath {
@@ -155,6 +159,8 @@ impl PathStats {
     slice::from_raw_parts(self.stats, self.num_stats as usize)
   }
 }
+unsafe impl Send for PathStats {}
+unsafe impl Sync for PathStats {}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum FilePermissions {
@@ -480,8 +486,8 @@ impl MerkleTrieNode {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct ExpandDirectoriesMapping {
-  digests: *const DirectoryDigest,
-  expansions: *const PathStats,
+  digests: *mut DirectoryDigest,
+  expansions: *mut PathStats,
   num_expansions: u64,
 }
 impl ExpandDirectoriesMapping {
@@ -500,9 +506,11 @@ impl ExpandDirectoriesMapping {
         .into(),
       )
     } else {
+      let boxed_digests: Box<[DirectoryDigest]> = Box::from(digests);
+      let boxed_expansions: Box<[PathStats]> = Box::from(expansions);
       Ok(&ExpandDirectoriesMapping {
-        digests: digests.as_ptr(),
-        expansions: expansions.as_ptr(),
+        digests: Box::into_raw(boxed_digests) as *mut DirectoryDigest,
+        expansions: Box::into_raw(boxed_expansions) as *mut PathStats,
         num_expansions: num_expansions as u64,
       })
     }
@@ -514,6 +522,8 @@ impl ExpandDirectoriesMapping {
     )
   }
 }
+unsafe impl Send for ExpandDirectoriesMapping {}
+unsafe impl Sync for ExpandDirectoriesMapping {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -542,20 +552,60 @@ impl UploadDirectoriesRequest {
 
 #[repr(C)]
 pub enum UploadDirectoriesResult {
-  UploadDirectoriesSucceeded,
+  UploadDirectoriesSucceeded(ExpandDirectoriesMapping),
   UploadDirectoriesFailed(*mut os::raw::c_char),
+}
+
+fn directories_upload_single(
+  file_stats: &[FileStat],
+) -> BoxFuture<DirectoryDigest, DirectoryFFIError> {
+  let mut trie = MerkleTrie::new();
+  future::result(trie.populate(file_stats))
+    .and_then(|()| MerkleTrieNode::recursively_upload_trie(trie))
+    .to_boxed()
+}
+
+fn directories_upload_impl(
+  all_path_stats: &[&[FileStat]],
+) -> BoxFuture<ExpandDirectoriesMapping, DirectoryFFIError> {
+  let expansions: Vec<PathStats> = all_path_stats
+    .iter()
+    .map(|stats| PathStats::from_slice(stats))
+    .cloned()
+    .collect();
+
+  let upload_tasks: Vec<BoxFuture<DirectoryDigest, _>> = all_path_stats
+    .iter()
+    .map(|file_stats| directories_upload_single(file_stats))
+    .collect();
+  let digests: BoxFuture<Vec<DirectoryDigest>, _> = future::join_all(upload_tasks).to_boxed();
+
+  digests
+    .and_then(|digests| {
+      future::result(
+        ExpandDirectoriesMapping::from_slices(&digests, &expansions).map(|mapping| mapping.clone()),
+      )
+      .to_boxed()
+    })
+    .to_boxed()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn directories_upload(
-  request: ExpandDirectoriesMapping,
+  request: UploadDirectoriesRequest,
 ) -> UploadDirectoriesResult {
-  let (digests, expansions) = request.as_slices();
-  for (digest, path_stats) in digests
-    .iter()
-    .zip(expansions.iter().map(|path_stats| path_stats.as_slice()))
-  {
-    for stat in path_stats.iter() {}
+  let path_stats: &[PathStats] = request.as_slice();
+  let all_path_stats: Vec<&[FileStat]> = path_stats.iter().map(|stats| stats.as_slice()).collect();
+  let result: Result<ExpandDirectoriesMapping, _> =
+    PANTS_TOKIO_EXECUTOR.block_on_with_persistent_runtime(directories_upload_impl(&all_path_stats));
+  match result {
+    Ok(mapping) => UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping),
+    Err(e) => {
+      let error_message = CCharErrorMessage::new(format!("{:?}", e));
+      UploadDirectoriesResult::UploadDirectoriesFailed(
+        error_message.leak_null_terminated_c_string(),
+      )
+    }
   }
 }
 

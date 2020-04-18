@@ -2323,6 +2323,7 @@ dependencies = [
  "futures",
  "futures-cpupool",
  "logging",
+ "parking_lot 0.6.4",
  "tokio",
  "workunit_store",
 ]

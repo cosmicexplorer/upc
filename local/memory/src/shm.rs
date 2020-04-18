@@ -66,7 +66,8 @@ impl From<Digest> for ShmKey {
 impl Into<Digest> for ShmKey {
   fn into(self: Self) -> Digest {
     let ShmKey {
-      fingerprint, size_bytes
+      fingerprint,
+      size_bytes,
     } = self;
     Digest(fingerprint, size_bytes as usize)
   }
