@@ -22,13 +22,15 @@
 // Arc<Mutex> can be more clear than needing to grok Orderings:
 #![allow(clippy::mutex_atomic)]
 
-use memory::shm::{CCharErrorMessage, ShmKey};
+use memory::shm::*;
 
 use bazel_protos::remote_execution as remexec;
 use boxfuture::{BoxFuture, Boxable};
+use fs::FileContent;
 use hashing::{Digest, Fingerprint};
 use store::Store;
 use task_executor::Executor;
+use workunit_store::WorkUnitStore;
 
 use futures01::{future, Future};
 use indexmap::IndexMap;
@@ -45,11 +47,12 @@ use std::slice;
 use std::sync::Arc;
 
 lazy_static! {
+  static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
+  static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
   static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
     Some(local_store_dir) => PathBuf::from(local_store_dir),
     None => PathBuf::from(env::var("HOME").unwrap()).join(".cache/pants/lmdb_store"),
   };
-  static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
   static ref LOCAL_STORE: Arc<Store> = {
     let executor = PANTS_TOKIO_EXECUTOR.clone();
     let store = Store::local_only(executor, &*LOCAL_STORE_PATH).unwrap();
@@ -105,7 +108,6 @@ impl ExpandDirectoriesRequest {
     slice::from_raw_parts(self.requests, self.num_requests as usize)
   }
 }
-
 unsafe impl Send for ExpandDirectoriesRequest {}
 unsafe impl Sync for ExpandDirectoriesRequest {}
 
@@ -121,11 +123,11 @@ impl ChildRelPath {
     let slice: &[u8] = slice::from_raw_parts(bytes_ptr, self.relpath_size as usize);
     Path::new(OsStr::from_bytes(slice))
   }
-  pub unsafe fn from_path(path: &Path) -> &Self {
+  pub unsafe fn from_path(path: &Path) -> Self {
     let slice: &[u8] = path.as_os_str().as_bytes();
     let relpath: *const os::raw::c_char =
       mem::transmute::<*const u8, *const os::raw::c_char>(slice.as_ptr());
-    &ChildRelPath {
+    ChildRelPath {
       relpath,
       relpath_size: slice.len() as u64,
     }
@@ -148,9 +150,9 @@ pub struct PathStats {
   num_stats: u64,
 }
 impl PathStats {
-  pub fn from_slice(stats: &[FileStat]) -> &Self {
+  pub fn from_slice(stats: &[FileStat]) -> Self {
     let num_stats = stats.len();
-    &PathStats {
+    PathStats {
       stats: stats.as_ptr(),
       num_stats: num_stats as u64,
     }
@@ -169,7 +171,7 @@ pub enum FilePermissions {
 }
 
 /* Necessary to mediate conversions between the remexec digest our own digests. */
-struct RemexecDigestWrapper {
+pub struct RemexecDigestWrapper {
   pub fingerprint: Fingerprint,
   pub size_bytes: usize,
 }
@@ -273,7 +275,7 @@ impl Into<remexec::DirectoryNode> for DirectoryNode {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct PathComponent {
+pub struct PathComponent {
   component: String,
 }
 impl PathComponent {
@@ -297,7 +299,7 @@ impl PathComponent {
 }
 
 #[derive(Debug)]
-struct MerkleTrie {
+pub struct MerkleTrie {
   map: IndexMap<PathComponent, MerkleTrieEntry>,
 }
 impl MerkleTrie {
@@ -330,25 +332,23 @@ impl MerkleTrie {
     match all_components.split_last() {
       None => unreachable!(),
       Some((last_component, intermediate_components)) => {
-        let mut cur_trie: &mut Self = &mut self;
+        let mut cur_trie: &mut Self = self;
 
         /* Get the penultimate trie. */
         for component in intermediate_components.iter() {
           let cur_trie_entry = cur_trie
             .map
-            .entry(*component)
+            .entry(component.clone())
             .or_insert_with(|| MerkleTrieEntry::SubTrie(MerkleTrie::new()));
-          match &mut *cur_trie_entry {
-            MerkleTrieEntry::SubTrie(mut sub_trie) => {
-              cur_trie = &mut sub_trie;
-            }
+          cur_trie = match &mut *cur_trie_entry {
+            MerkleTrieEntry::SubTrie(ref mut sub_trie) => sub_trie,
             MerkleTrieEntry::File(key) => {
               return Err(DirectoryFFIError::OverlappingPathStats(format!(
-                "expected sub trie at entry {:?}: got file for key {:?} instead!",
-                *cur_trie_entry, key,
+                "expected sub trie: got file for key {:?} instead!",
+                key,
               )));
             }
-          }
+          };
         }
 
         let last_component = last_component.clone();
@@ -380,13 +380,13 @@ impl MerkleTrie {
 }
 
 #[derive(Debug)]
-enum MerkleTrieEntry {
+pub enum MerkleTrieEntry {
   File(ShmKey),
   SubTrie(MerkleTrie),
 }
 
 /* This distinct enum is useful, even if there is only one case! */
-enum MerkleTrieTerminalEntry {
+pub enum MerkleTrieTerminalEntry {
   File(ShmKey),
 }
 
@@ -494,7 +494,7 @@ impl ExpandDirectoriesMapping {
   pub fn from_slices<'a>(
     digests: &'a [DirectoryDigest],
     expansions: &'a [PathStats],
-  ) -> Result<&'a Self, DirectoryFFIError> {
+  ) -> Result<Self, DirectoryFFIError> {
     let num_digests = digests.len();
     let num_expansions = expansions.len();
     if num_digests != num_expansions {
@@ -508,7 +508,7 @@ impl ExpandDirectoriesMapping {
     } else {
       let boxed_digests: Box<[DirectoryDigest]> = Box::from(digests);
       let boxed_expansions: Box<[PathStats]> = Box::from(expansions);
-      Ok(&ExpandDirectoriesMapping {
+      Ok(ExpandDirectoriesMapping {
         digests: Box::into_raw(boxed_digests) as *mut DirectoryDigest,
         expansions: Box::into_raw(boxed_expansions) as *mut PathStats,
         num_expansions: num_expansions as u64,
@@ -532,10 +532,88 @@ pub enum ExpandDirectoriesResult {
   ExpandDirectoriesFailed(*mut os::raw::c_char),
 }
 
+fn memory_map_file_content(bytes: &[u8]) -> BoxFuture<ShmKey, DirectoryFFIError> {
+  let digest = Digest::of_bytes(bytes);
+  let key: ShmKey = digest.into();
+  let source: *const os::raw::c_void =
+    unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) };
+  let request = ShmAllocateRequest { key, source };
+  future::result(
+    ShmHandle::new(request.into())
+      .map(|handle| handle.get_key())
+      .map_err(|e| format!("{:?}", e).into()),
+  )
+  .to_boxed()
+}
+
+fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, DirectoryFFIError> {
+  let pants_digest: Digest = digest.into();
+  let all_files_content: BoxFuture<Vec<FileContent>, _> =
+    LOCAL_STORE.contents_for_directory(pants_digest, PANTS_WORKUNIT_STORE.clone());
+
+  all_files_content
+    .map_err(|e| format!("{:?}", e).into())
+    .and_then(|all_files_content| {
+      let file_upload_tasks: Vec<BoxFuture<ShmKey, _>> = all_files_content
+        .iter()
+        .map(|file_content| memory_map_file_content(file_content.content.as_ref()))
+        .collect();
+      future::join_all(file_upload_tasks)
+        .map(|all_keys| {
+          let file_stats: Vec<FileStat> = all_files_content
+            .into_iter()
+            .zip(all_keys)
+            .map(|(file_content, key)| FileStat {
+              rel_path: unsafe { ChildRelPath::from_path(&file_content.path) },
+              key,
+            })
+            .collect();
+          PathStats::from_slice(&file_stats)
+        })
+        .to_boxed()
+    })
+    .to_boxed()
+}
+
+fn directories_expand_impl(
+  digests: &[DirectoryDigest],
+) -> BoxFuture<ExpandDirectoriesMapping, DirectoryFFIError> {
+  let digests: Vec<DirectoryDigest> = digests.to_vec();
+
+  let expand_tasks: Vec<BoxFuture<PathStats, _>> = digests
+    .clone()
+    .into_iter()
+    .map(|digest| directories_expand_single(digest))
+    .collect();
+  let all_path_stats: BoxFuture<Vec<PathStats>, _> = future::join_all(expand_tasks).to_boxed();
+
+  all_path_stats
+    .and_then(move |all_path_stats| {
+      future::result(ExpandDirectoriesMapping::from_slices(
+        &digests,
+        &all_path_stats,
+      ))
+      .to_boxed()
+    })
+    .to_boxed()
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn directories_expand(
   request: ExpandDirectoriesRequest,
 ) -> ExpandDirectoriesResult {
+  let digests: &[DirectoryDigest] = request.as_slice();
+  let result: Result<ExpandDirectoriesMapping, _> =
+    PANTS_TOKIO_EXECUTOR.block_on_with_persistent_runtime(directories_expand_impl(digests));
+  match result {
+    Ok(mapping) => ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping),
+    Err(e) => {
+      let error_message = CCharErrorMessage::new(format!("{:?}", e));
+      ExpandDirectoriesResult::ExpandDirectoriesFailed(
+        error_message.leak_null_terminated_c_string(),
+      )
+    }
+  }
 }
 
 #[repr(C)]
@@ -571,7 +649,6 @@ fn directories_upload_impl(
   let expansions: Vec<PathStats> = all_path_stats
     .iter()
     .map(|stats| PathStats::from_slice(stats))
-    .cloned()
     .collect();
 
   let upload_tasks: Vec<BoxFuture<DirectoryDigest, _>> = all_path_stats
@@ -581,11 +658,8 @@ fn directories_upload_impl(
   let digests: BoxFuture<Vec<DirectoryDigest>, _> = future::join_all(upload_tasks).to_boxed();
 
   digests
-    .and_then(|digests| {
-      future::result(
-        ExpandDirectoriesMapping::from_slices(&digests, &expansions).map(|mapping| mapping.clone()),
-      )
-      .to_boxed()
+    .and_then(move |digests| {
+      future::result(ExpandDirectoriesMapping::from_slices(&digests, &expansions)).to_boxed()
     })
     .to_boxed()
 }

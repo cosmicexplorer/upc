@@ -10,6 +10,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 bazel_protos = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/process_execution/bazel_protos" }
 boxfuture = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/boxfuture" }
+fs = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs" }
 futures01 = { package = "futures", version = "0.1" }
 hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }
 indexmap = "1.0.2"
@@ -18,3 +19,4 @@ memory = { path = "../memory" }
 protobuf = { version = "2.0.6", features = ["with-bytes"] }
 store = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs/store" }
 task_executor = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/task_executor" }
+workunit_store = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/workunit_store" }

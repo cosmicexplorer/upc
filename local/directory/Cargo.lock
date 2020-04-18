@@ -576,6 +576,7 @@ version = "0.1.0"
 dependencies = [
  "bazel_protos",
  "boxfuture",
+ "fs",
  "futures",
  "hashing",
  "indexmap",
@@ -584,6 +585,7 @@ dependencies = [
  "protobuf",
  "store",
  "task_executor",
+ "workunit_store",
 ]
 
 [[package]]

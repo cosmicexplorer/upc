@@ -169,6 +169,10 @@ unsafe impl Send for ShmHandle {}
 unsafe impl Sync for ShmHandle {}
 
 impl ShmHandle {
+  pub fn get_key(&self) -> ShmKey {
+    self.key
+  }
+
   pub fn get_base_address(&self) -> *const os::raw::c_void {
     self.mmap_addr
   }
