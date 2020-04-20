@@ -11,7 +11,7 @@ object LibMemory {
     def shm_get_key(request: ShmGetKeyRequest): ShmKey
     def shm_allocate(request: ShmAllocateRequest): ShmAllocateResult
     def shm_retrieve(request: ShmRetrieveRequest): ShmRetrieveResult
-    // def shm_delete(request: ShmDeleteRequest): ShmDeleteResult
+    def shm_delete(request: ShmDeleteRequest): ShmDeleteResult
   }
 
   abstract class FFIError(message: String, cause: Throwable = null)
@@ -55,6 +55,15 @@ object LibMemory {
   }
   object ShmKey {
     val FINGERPRINT_LENGTH: Int = 32
+
+    def apply(sizeBytes: Long, fingerprint: Array[Byte]): ShmKey = {
+      val ret = new ShmKey
+      ret.size_bytes.set(sizeBytes)
+      ret.fingerprint.zip(fingerprint).foreach { case (dst, src) =>
+        dst.set(src)
+      }
+      ret
+    }
   }
   case class ShmKeyError(message: String, cause: Throwable = null)
       extends FFIError(message, cause)

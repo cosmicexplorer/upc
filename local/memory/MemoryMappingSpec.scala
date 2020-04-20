@@ -12,30 +12,32 @@ import scala.util.{Try, Success}
 
 @RunWith(classOf[JUnitRunner])
 class MemoryMappingSpec extends FlatSpec with Matchers {
-  import LibMemory._
-  import LibMemoryEnums._
-
   "The Shm object" should "successfully retrieve the correct ShmKey for a string" in {
     val knownSource = "asdf".getBytes
-    val ptr = intoDirectPointer(knownSource)
-    val req = ShmGetKeyRequest(ptr)
-    val key = instance.shm_get_key(req)
-    key.getSize should be (knownSource.length)
-    val fp = DatatypeConverter.printHexBinary(key.getFingerprintBytes)
-    fp should be ("F0E4C2F76C58916EC258F246851BEA091D14D4247A2FC3E18694461B1816E13B")
+    val mapping = MemoryMapping.fromArray(knownSource)
+    mapping.getBytes should be (knownSource)
+
+    val req = ShmGetKeyRequest(mapping)
+    val key = Shm.getKey(req).get
+    key.length should be (knownSource.length)
+    key.fingerprintHex should be ("f0e4c2f76c58916ec258f246851bea091d14d4247a2fc3e18694461b1816e13b")
   }
 
   it should "successfully allocate and retrieve shared memory" in {
     val randomSource = UUID.randomUUID().toString.getBytes
-    val ptr = intoDirectPointer(randomSource)
+    val mapping = MemoryMapping.fromArray(randomSource)
+    mapping.getBytes should be (randomSource)
 
-    val key_req = ShmGetKeyRequest(ptr)
-    val key = instance.shm_get_key(key_req)
+    val key_req = ShmGetKeyRequest(mapping)
+    val key = Shm.getKey(key_req).get
+    key.length should be (randomSource.length)
 
-    val allocate_req = ShmAllocateRequest(key, ptr)
-    val allocate_result = instance.shm_allocate(allocate_req)
-    allocate_result.tag.get should be (ShmAllocateResult_Tag.AllocationSucceeded)
-    throw new RuntimeException(s"wow: ${}")
+    val allocate_req = ShmAllocateRequest(key, mapping)
+    val allocate_result = Shm.allocate(allocate_req).get
+    val shared_mapping = allocate_result match {
+      case AllocationSucceeded(src) => src
+    }
+    shared_mapping.getBytes should be (randomSource)
 
     // val req = ShmRetrieveRequest()
     // val mapping = MemoryMapping.fromArray(randomSource.getBytes)
