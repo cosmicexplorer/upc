@@ -244,29 +244,26 @@ impl MerkleTrieNode {
       .collect();
 
     /* Recursion!!! */
-    let mapped_dir_nodes: BoxFuture<Vec<DirectoryNode>, _> = future::join_all(
-      sub_tries
-        .into_iter()
-        .map(|(component, sub_trie)| {
-          let decoded: Result<String, _> = Self::decode_utf8(component);
-          let serialized_directory: BoxFuture<DirectoryDigest, _> =
-            Self::recursively_upload_trie(sub_trie)
-              .map(|d| d.into())
-              .to_boxed();
-          future::result(decoded)
-            .join(serialized_directory)
-            .map(|(name, directory_digest)| DirectoryNode {
-              name,
-              digest: directory_digest,
-            })
-            .to_boxed()
-        })
-        .collect::<Vec<_>>(),
-    )
-    .to_boxed();
+    let mapped_dir_nodes: Vec<BoxFuture<DirectoryNode, _>> = sub_tries
+      .into_iter()
+      .map(|(component, sub_trie)| {
+        let decoded: Result<String, _> = Self::decode_utf8(component);
+        let serialized_directory: BoxFuture<DirectoryDigest, _> =
+          Self::recursively_upload_trie(sub_trie)
+            .map(|d| d.into())
+            .to_boxed();
+        future::result(decoded)
+          .join(serialized_directory)
+          .map(|(name, directory_digest)| DirectoryNode {
+            name,
+            digest: directory_digest,
+          })
+          .to_boxed()
+      })
+      .collect::<Vec<_>>();
 
     let directory_proto: BoxFuture<remexec_api::Directory, _> = future::join_all(mapped_file_nodes)
-      .join(mapped_dir_nodes)
+      .join(future::join_all(mapped_dir_nodes))
       .map(|(files, directories)| MerkleTrieNode { files, directories })
       .map(|node| node.into())
       .to_boxed();

@@ -4,9 +4,11 @@ use indexmap::IndexMap;
 
 use std::convert::From;
 use std::ffi::OsStr;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::str;
+
 
 #[derive(Debug)]
 pub enum MerkleTrieError {
@@ -19,7 +21,7 @@ impl From<String> for MerkleTrieError {
   }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct SinglePathComponent {
   inner: Vec<u8>,
 }
@@ -39,6 +41,12 @@ impl SinglePathComponent {
   }
   pub fn extract_component_bytes(self) -> Vec<u8> {
     self.inner
+  }
+}
+impl Debug for SinglePathComponent {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let s = str::from_utf8(&self.inner).unwrap();
+    write!(f, "SinglePathComponent({})", s)
   }
 }
 
@@ -116,26 +124,28 @@ impl PathComponents {
 }
 
 #[derive(Debug)]
-pub enum MerkleTrieEntry<File: Debug> {
+pub enum MerkleTrieEntry<File: Debug+Eq> {
   File(File),
   SubTrie(MerkleTrie<File>),
 }
 
 /* This distinct enum is useful, even if there is only one case! */
-pub enum MerkleTrieTerminalEntry<File> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum MerkleTrieTerminalEntry<File: Debug+Eq> {
   File(File),
 }
 
-pub struct FileStat<File> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct FileStat<File: Debug+Eq> {
   pub components: PathComponents,
   pub terminal: MerkleTrieTerminalEntry<File>,
 }
 
 #[derive(Debug)]
-pub struct MerkleTrie<File: Debug> {
+pub struct MerkleTrie<File: Debug+Eq> {
   map: IndexMap<SinglePathComponent, MerkleTrieEntry<File>>,
 }
-impl<File: Debug> MerkleTrie<File> {
+impl<File: Debug+Eq> MerkleTrie<File> {
   pub fn new() -> Self {
     MerkleTrie {
       map: IndexMap::new(),
@@ -216,8 +226,8 @@ impl<File: Debug> MerkleTrie<File> {
     /* Validate that no file or directory has been written to this path before. */
     if let Some(existing_entry) = cur_trie.map.get(&last_component) {
       Err(MerkleTrieError::OverlappingPathStats(format!(
-            "found existing entry {:?} in cur trie {:?} -- should be empty (no file or containing directory should have the same path in a set of path stats!)!",
-            existing_entry, cur_trie,
+            "found existing entry {:?} for last component {:?} -- should be empty (no file or containing directory should have the same path in a set of path stats!)!",
+            existing_entry, &last_component,
           )))
     } else {
       let to_insert: MerkleTrieEntry<File> = match terminal {
@@ -246,7 +256,7 @@ pub mod tests {
     PathComponents::from_path(Path::new(s))
   }
 
-  pub fn make_file_stats<'a, File: Copy>(
+  pub fn make_file_stats<'a, File: Debug+Copy+Eq>(
     input: &'a [(PathComponents, File)],
   ) -> Vec<FileStat<File>> {
     input

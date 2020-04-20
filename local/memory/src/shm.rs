@@ -8,12 +8,14 @@ use parking_lot::RwLock;
 
 use std::collections::HashMap;
 use std::convert::{From, Into};
+use std::ffi::CStr;
 use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::os;
 use std::ptr;
 use std::slice;
+use std::str;
 use std::sync::Arc;
 
 lazy_static! {
@@ -356,10 +358,10 @@ impl ShmHandle {
   }
 }
 
+#[derive(Debug)]
 pub struct CCharErrorMessage {
   message: String,
 }
-
 impl CCharErrorMessage {
   pub fn new(message: String) -> Self {
     CCharErrorMessage { message }
@@ -374,6 +376,12 @@ impl CCharErrorMessage {
       .collect();
     let boxed_bytes: Box<[u8]> = null_terminated_error_message.into();
     Box::into_raw(boxed_bytes) as *mut os::raw::c_char
+  }
+  pub unsafe fn from_c_str(c_str: *const os::raw::c_char) -> Result<Self, str::Utf8Error> {
+    let c_str = CStr::from_ptr(c_str);
+    str::from_utf8(c_str.to_bytes()).map(|s| CCharErrorMessage {
+      message: s.to_string(),
+    })
   }
 }
 

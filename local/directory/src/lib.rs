@@ -201,11 +201,14 @@ impl ExpandDirectoriesMapping {
       })
     }
   }
-  pub unsafe fn as_slices(&self) -> (&[DirectoryDigest], &[PathStats]) {
-    (
-      slice::from_raw_parts(self.digests, self.num_expansions as usize),
-      slice::from_raw_parts(self.expansions, self.num_expansions as usize),
-    )
+  pub unsafe fn into_paired(&self) -> Vec<(&DirectoryDigest, &PathStats)> {
+    slice::from_raw_parts(self.digests, self.num_expansions as usize)
+      .iter()
+      .zip(slice::from_raw_parts(
+        self.expansions,
+        self.num_expansions as usize,
+      ))
+      .collect()
   }
 }
 unsafe impl Send for ExpandDirectoriesMapping {}
@@ -300,6 +303,12 @@ impl UploadDirectoriesRequest {
   pub unsafe fn as_slice(&self) -> &[PathStats] {
     slice::from_raw_parts(self.path_stats, self.num_path_stats as usize)
   }
+  pub fn from_slice(path_stats: &[PathStats]) -> Self {
+    UploadDirectoriesRequest {
+      path_stats: path_stats.as_ptr(),
+      num_path_stats: path_stats.len() as u64,
+    }
+  }
 }
 
 #[repr(C)]
@@ -314,6 +323,7 @@ fn directories_upload_single(
   let mut trie = merkle_trie::MerkleTrie::<ShmKey>::new();
   let abstract_stats: Vec<merkle_trie::FileStat<ShmKey>> =
     file_stats.iter().cloned().map(|stat| stat.into()).collect();
+  dbg!(&abstract_stats);
   future::result(
     trie
       .populate(abstract_stats)
@@ -369,8 +379,60 @@ pub unsafe extern "C" fn directories_upload(
 
 #[cfg(test)]
 mod tests {
+  use super::*;
+  use crate::merkle_trie::{tests::*, PathComponents};
+
+  use std::path::PathBuf;
+
   #[test]
-  fn todo() {
-    assert!(false, "TODO");
+  fn directory_upload_expand_end_to_end() -> Result<(), DirectoryFFIError> {
+    let input: Vec<(PathComponents, &str)> = generate_example_input();
+
+    let mmapped_input: Vec<(PathComponents, ShmKey)> = input
+      .iter()
+      .map(|(c, s)| {
+        (
+          c.clone(),
+          remexec::memory_map_file_content(s.as_bytes())
+            .unwrap()
+            .get_key(),
+        )
+      })
+      .collect();
+
+    let ffi_mapped: Vec<(PathBuf, ShmKey)> = mmapped_input
+      .into_iter()
+      .map(|(c, key)| (c.into_path(), key))
+      .collect();
+    let ffi_input: Vec<FileStat> = ffi_mapped
+      .iter()
+      .map(|(path, key)| {
+        let rel_path = unsafe { ChildRelPath::from_path(&path) };
+        FileStat {
+          rel_path,
+          key: *key,
+        }
+      })
+      .collect();
+    let input_path_stats = vec![PathStats::from_slice(&ffi_input)];
+    let upload_request = UploadDirectoriesRequest::from_slice(&input_path_stats);
+
+    let uploaded_mapping = match unsafe { directories_upload(upload_request) } {
+      UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping) => mapping,
+      UploadDirectoriesResult::UploadDirectoriesFailed(e_str) => unreachable!(),
+    };
+    let uploaded = unsafe { uploaded_mapping.into_paired() };
+    assert_eq!(1, uploaded.len());
+    let (_dir_digest, path_stats) = uploaded.get(0).unwrap();
+
+    let ffi_output = unsafe { path_stats.as_slice() }.to_vec();
+    let ffi_input_vec: Vec<merkle_trie::FileStat<ShmKey>> =
+      ffi_input.iter().map(|stat| stat.clone().into()).collect();
+    let ffi_output_vec: Vec<merkle_trie::FileStat<ShmKey>> =
+      ffi_output.iter().map(|stat| stat.clone().into()).collect();
+    assert_eq!(ffi_input_vec, ffi_output_vec);
+
+    /* TODO: check that expanded dir also has the same! */
+    Ok(())
   }
 }
