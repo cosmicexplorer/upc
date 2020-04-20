@@ -170,8 +170,13 @@ public class LibMemory {
         throw new ShmKeyError("size cannot be negative -- was " + Long.toString(sizeArg));
       }
       size = new u_int64_t();
-      size.set(sizeArg);
+      // NB: If this line is put below the size.set(sizeArg), we get an error on the following
+      // source.set(sourceArg) because the struct appears to think it only has 8 bytes of storage
+      // (it has an ArrayIndexOutOfBoundsException at offset 8 when trying to set the pointer) -- so
+      // it's possible that calling size.set() finalizes the maximum size of the object somehow, in
+      // a way that isn't updated when we call source = new Pointer() afterwards.
       source = new Pointer();
+      size.set(sizeArg);
       source.set(sourceArg);
     }
   }
