@@ -129,8 +129,8 @@ impl ChildRelPath {
   }
 }
 
-/* NB: remove all directories from path stats!!! all path stats *strictly* just contain file paths!!
- * directory paths are *INFERRED*!!!! */
+/* NB: we remove all directories from path stats!!! all path stats *strictly* just contain file
+ * paths!! directory paths are *INFERRED*!!!! */
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct FileStat {

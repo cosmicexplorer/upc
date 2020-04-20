@@ -42,7 +42,7 @@ impl SinglePathComponent {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PathComponents {
   components: Vec<SinglePathComponent>,
 }
@@ -238,8 +238,39 @@ impl<File: Debug> MerkleTrie<File> {
 
 #[cfg(test)]
 mod tests {
+  use super::*;
+
+  use std::path::Path;
+
+  fn path_components(s: &str) -> Result<PathComponents, MerkleTrieError> {
+    PathComponents::from_path(Path::new(s))
+  }
+
   #[test]
-  fn todo() {
+  fn populate_and_extract() -> Result<(), MerkleTrieError> {
+    let input: Vec<(PathComponents, &str)> = vec![
+      (path_components("a.txt")?, "this is a.txt!"),
+      (path_components("b.txt")?, "this is b.txt!"),
+      (path_components("d/e.txt")?, "this is d/e.txt!"),
+    ];
+    let file_stats: Vec<FileStat<&str>> = input
+      .iter()
+      .map(|(components, file)| FileStat {
+        components: components.clone(),
+        terminal: MerkleTrieTerminalEntry::File(*file),
+      })
+      .collect();
+
+    let mut trie = MerkleTrie::<&str>::new();
+    trie.populate(file_stats)?;
+
+    let output: Vec<(PathComponents, &str)> = trie.extract_flattened();
+    assert_eq!(input, output);
+    Ok(())
+  }
+
+  #[test]
+  fn catches_overlapping_paths() {
     assert!(false, "TODO");
   }
 }
