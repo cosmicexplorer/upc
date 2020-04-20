@@ -131,10 +131,51 @@ impl From<ShmAllocateRequest> for ShmRequest {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ShmAllocateResult {
-  AllocationSucceeded(*const os::raw::c_void),
-  DigestDidNotMatch(ShmKey),
-  AllocationFailed(*mut os::raw::c_char),
+pub enum ShmAllocateResultStatus {
+  AllocationSucceeded,
+  DigestDidNotMatch,
+  AllocationFailed,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ShmAllocateResult {
+  pub status: ShmAllocateResultStatus,
+  pub correct_key: ShmKey,
+  pub address: *const os::raw::c_void,
+  pub error: *mut os::raw::c_char,
+}
+impl ShmAllocateResult {
+  fn empty_key() -> ShmKey {
+    ShmKey::from(hashing::EMPTY_DIGEST)
+  }
+
+  pub fn successful(address: *const os::raw::c_void) -> Self {
+    assert!(!address.is_null());
+    ShmAllocateResult {
+      status: ShmAllocateResultStatus::AllocationSucceeded,
+      correct_key: Self::empty_key(),
+      address,
+      error: ptr::null_mut(),
+    }
+  }
+  pub fn failing(error: *mut os::raw::c_char) -> Self {
+    assert!(!error.is_null());
+    ShmAllocateResult {
+      status: ShmAllocateResultStatus::AllocationFailed,
+      correct_key: Self::empty_key(),
+      address: ptr::null(),
+      error,
+    }
+  }
+  pub fn mismatched_digest(correct_key: ShmKey) -> Self {
+    ShmAllocateResult {
+      status: ShmAllocateResultStatus::DigestDidNotMatch,
+      correct_key,
+      address: ptr::null(),
+      error: ptr::null_mut(),
+    }
+  }
 }
 
 #[repr(C)]
@@ -416,21 +457,24 @@ impl ShmGetKeyRequest {
 /*   key */
 /* } */
 
-fn leak<T>(x: T) -> *mut T {
-  Box::into_raw(Box::new(x)) as *mut T
-}
+/* fn leak<T>(x: T) -> *mut T { */
+/*   Box::into_raw(Box::new(x)) as *mut T */
+/* } */
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_get_key(request: &ShmGetKeyRequest) -> *mut ShmKey {
-  let input_bytes = request.as_slice();
+pub unsafe extern "C" fn shm_get_key(request: *const ShmGetKeyRequest, result: *mut ShmKey) {
+  let input_bytes = (*request).as_slice();
   let digest = Digest::of_bytes(input_bytes);
   let key: ShmKey = digest.into();
-  leak(key)
+  *result = key
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_retrieve(request: &ShmRetrieveRequest) -> *mut ShmRetrieveResult {
-  let result = match ShmHandle::new((*request).into()) {
+pub unsafe extern "C" fn shm_retrieve(
+  request: *const ShmRetrieveRequest,
+  result: *mut ShmRetrieveResult,
+) {
+  *result = match ShmHandle::new((*request).into()) {
     Ok(shm_handle) => ShmRetrieveResult::RetrieveSucceeded(shm_handle.get_base_address()),
     Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::RetrieveDidNotExist,
     Err(e) => {
@@ -438,34 +482,39 @@ pub unsafe extern "C" fn shm_retrieve(request: &ShmRetrieveRequest) -> *mut ShmR
       ShmRetrieveResult::RetrieveInternalError(error_message.leak_null_terminated_c_string())
     }
   };
-  leak(result)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_allocate(request: &ShmAllocateRequest) -> *mut ShmAllocateResult {
-  let result = match ShmHandle::new((*request).into()) {
-    Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()),
-    Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::DigestDidNotMatch(shm_key),
+pub unsafe extern "C" fn shm_allocate(
+  request: *const ShmAllocateRequest,
+  result: *mut ShmAllocateResult,
+) {
+  *result = match ShmHandle::new((*request).into()) {
+    /* Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()), */
+    Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address()),
+    Err(ShmError::DigestDidNotMatch(_shm_key)) => ShmAllocateResult::mismatched_digest(),
     Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmAllocateResult::AllocationFailed(error_message.leak_null_terminated_c_string())
+      let error = format!("{:?}", e);
+      let error_message = CCharErrorMessage::new(error);
+      ShmAllocateResult::failing(error_message.leak_null_terminated_c_string())
     }
   };
-  leak(result)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_delete(request: &ShmDeleteRequest) -> *mut ShmDeleteResult {
-  let result =
-    match ShmHandle::new((*request).into()).and_then(|mut handle| handle.destroy_mapping()) {
-      Ok(()) => ShmDeleteResult::DeletionSucceeded,
-      Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
-      Err(e) => {
-        let error_message = CCharErrorMessage::new(format!("{:?}", e));
-        ShmDeleteResult::DeleteInternalError(error_message.leak_null_terminated_c_string())
-      }
-    };
-  leak(result)
+pub unsafe extern "C" fn shm_delete(
+  request: *const ShmDeleteRequest,
+  result: *mut ShmDeleteResult,
+) {
+  *result = match ShmHandle::new((*request).into()).and_then(|mut handle| handle.destroy_mapping())
+  {
+    Ok(()) => ShmDeleteResult::DeletionSucceeded,
+    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
+    Err(e) => {
+      let error_message = CCharErrorMessage::new(format!("{:?}", e));
+      ShmDeleteResult::DeleteInternalError(error_message.leak_null_terminated_c_string())
+    }
+  };
 }
 
 #[cfg(test)]

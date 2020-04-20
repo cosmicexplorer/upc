@@ -3,6 +3,7 @@ package upc.local.memory
 import _root_.jnr.ffi.Pointer
 
 import java.nio.ByteBuffer
+import java.nio.charset.Charset
 import javax.xml.bind.DatatypeConverter
 import scala.util.Try
 
@@ -158,13 +159,15 @@ object FromNative {
   implicit object ShmAllocateResultFromNative
       extends FromNative[ShmAllocateResult, LibMemory.ShmAllocateResult] {
     def fromNative(native: LibMemory.ShmAllocateResult): Try[ShmAllocateResult] = Try {
-      native.tag.get match {
-        case LibMemoryEnums.ShmAllocateResult_Tag.AllocationSucceeded => AllocationSucceeded(
-          native.body.allocation_succeeded._0.get.fromNative().get)
-        case LibMemoryEnums.ShmAllocateResult_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
-          native.body.digest_did_not_match._0.fromNative().get)
-        case LibMemoryEnums.ShmAllocateResult_Tag.AllocationFailed => throw AllocationFailed(
-          native.body.allocation_failed._0.get.getString(0))
+      native.status.get match {
+        case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationSucceeded => AllocationSucceeded(
+          native.address.get.fromNative().get)
+        case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
+          native.correct_key.fromNative().get)
+        case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => {
+          val msgPtr = native.error.get
+          throw AllocationFailed(msgPtr.getString(0))
+        }
       }
     }
   }
@@ -203,17 +206,29 @@ object Shm {
 
   def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try {
     val req = request.intoNative().get
-    // req.toString
-    // throw new RuntimeException(req.toString)
-    instance.shm_get_key(req).fromNative().get
+    val res = new LibMemory.ShmKey
+    instance.shm_get_key(req, res)
+    res.fromNative().get
   }
 
-  def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try(
-    instance.shm_allocate(request.intoNative().get).fromNative().get)
+  def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try {
+    val req = request.intoNative().get
+    val res = new LibMemory.ShmAllocateResult
+    instance.shm_allocate(req, res)
+    res.fromNative().get
+  }
 
-  def retrieve(request: ShmRetrieveRequest): Try[ShmRetrieveResult] = Try(
-    instance.shm_retrieve(request.intoNative().get).fromNative().get)
+  def retrieve(request: ShmRetrieveRequest): Try[ShmRetrieveResult] = Try {
+    val req = request.intoNative().get
+    val res = new LibMemory.ShmRetrieveResult
+    instance.shm_retrieve(req, res)
+    res.fromNative().get
+  }
 
-  def delete(request: ShmDeleteRequest): Try[ShmDeleteResult] = Try(
-    instance.shm_delete(request.intoNative().get).fromNative().get)
+  def delete(request: ShmDeleteRequest): Try[ShmDeleteResult] = Try {
+    val req = request.intoNative().get
+    val res = new LibMemory.ShmDeleteResult
+    instance.shm_delete(req, res)
+    res.fromNative().get
+  }
 }

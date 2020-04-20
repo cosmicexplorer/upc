@@ -141,6 +141,12 @@
 
 #define S_IXUSR 64
 
+typedef enum {
+  AllocationSucceeded,
+  DigestDidNotMatch,
+  AllocationFailed,
+} ShmAllocateResultStatus;
+
 typedef uint32_t SizeType;
 
 typedef struct {
@@ -148,37 +154,20 @@ typedef struct {
   Fingerprint fingerprint;
 } ShmKey;
 
-typedef enum {
-  AllocationSucceeded,
-  DigestDidNotMatch,
-  AllocationFailed,
-} ShmAllocateResult_Tag;
-
-typedef struct {
-  const void *_0;
-} AllocationSucceeded_Body;
-
-typedef struct {
-  ShmKey _0;
-} DigestDidNotMatch_Body;
-
-typedef struct {
-  char *_0;
-} AllocationFailed_Body;
-
-typedef struct {
-  ShmAllocateResult_Tag tag;
-  union {
-    AllocationSucceeded_Body allocation_succeeded;
-    DigestDidNotMatch_Body digest_did_not_match;
-    AllocationFailed_Body allocation_failed;
-  };
-} ShmAllocateResult;
-
 typedef struct {
   ShmKey key;
   const void *source;
 } ShmAllocateRequest;
+
+typedef struct {
+  ShmAllocateResultStatus status;
+  const void *address;
+  char *error;
+} ShmAllocateResult;
+
+typedef struct {
+  ShmKey key;
+} ShmDeleteRequest;
 
 typedef enum {
   DeletionSucceeded,
@@ -198,13 +187,13 @@ typedef struct {
 } ShmDeleteResult;
 
 typedef struct {
-  ShmKey key;
-} ShmDeleteRequest;
-
-typedef struct {
   SizeType size;
   const void *source;
 } ShmGetKeyRequest;
+
+typedef struct {
+  ShmKey key;
+} ShmRetrieveRequest;
 
 typedef enum {
   RetrieveSucceeded,
@@ -227,10 +216,6 @@ typedef struct {
     RetrieveInternalError_Body retrieve_internal_error;
   };
 } ShmRetrieveResult;
-
-typedef struct {
-  ShmKey key;
-} ShmRetrieveRequest;
 
 typedef unsigned int __uint32_t;
 
@@ -284,13 +269,13 @@ typedef struct {
   void *shm_internal;
 } __shmid_ds_new;
 
-ShmAllocateResult *shm_allocate(const ShmAllocateRequest *request);
+void shm_allocate(const ShmAllocateRequest *request, ShmAllocateResult *result);
 
-ShmDeleteResult *shm_delete(const ShmDeleteRequest *request);
+void shm_delete(const ShmDeleteRequest *request, ShmDeleteResult *result);
 
-ShmKey *shm_get_key(const ShmGetKeyRequest *request);
+void shm_get_key(const ShmGetKeyRequest *request, ShmKey *result);
 
-ShmRetrieveResult *shm_retrieve(const ShmRetrieveRequest *request);
+void shm_retrieve(const ShmRetrieveRequest *request, ShmRetrieveResult *result);
 
 extern void *shmat(int arg1, const void *arg2, int arg3);
 

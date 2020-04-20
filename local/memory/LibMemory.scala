@@ -8,10 +8,10 @@ object LibMemory {
   import LibMemoryEnums._
 
   trait Iface {
-    def shm_get_key(request: ShmGetKeyRequest): ShmKey
-    def shm_allocate(request: ShmAllocateRequest): ShmAllocateResult
-    def shm_retrieve(request: ShmRetrieveRequest): ShmRetrieveResult
-    def shm_delete(request: ShmDeleteRequest): ShmDeleteResult
+    def shm_get_key(request: ShmGetKeyRequest, result: ShmKey): Unit
+    def shm_allocate(request: ShmAllocateRequest, result: ShmAllocateResult): Unit
+    def shm_retrieve(request: ShmRetrieveRequest, result: ShmRetrieveResult): Unit
+    def shm_delete(request: ShmDeleteRequest, result: ShmDeleteResult): Unit
   }
 
   abstract class FFIError(message: String, cause: Throwable = null)
@@ -95,26 +95,14 @@ object LibMemory {
       ret
     }
   }
-  // [Result]* for shm_allocate()
-  class AllocationSucceeded_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class DigestDidNotMatch_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new ShmKey
-  }
-  class AllocationFailed_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class ShmAllocateResult_Body(runtime: Runtime = runtime) extends Union(runtime) {
-    val allocation_succeeded = new AllocationSucceeded_Body
-    val digest_did_not_match = new DigestDidNotMatch_Body
-    val allocation_failed = new AllocationFailed_Body
-  }
-  // End [Result] for shm_allocate()
+  // [Result] for shm_allocate()
   class ShmAllocateResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val tag: Enum8[ShmAllocateResult_Tag] = new Enum8(classOf[ShmAllocateResult_Tag])
+    val status: Enum[ShmAllocateResultStatus_Tag] = new Enum(classOf[ShmAllocateResultStatus_Tag])
+    val correct_key = new ShmKey
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
-    val body = new ShmAllocateResult_Body
+    // val body = new ShmAllocateResult_Body
+    val address = new Pointer
+    val error = new Pointer
   }
 
   // [Request] for shm_retrieve()
@@ -141,7 +129,7 @@ object LibMemory {
   }
   // End [Result] for shm_retrieve()
   class ShmRetrieveResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val tag: Enum8[ShmRetrieveResult_Tag] = new Enum8(classOf[ShmRetrieveResult_Tag])
+    val tag: Enum[ShmRetrieveResult_Tag] = new Enum(classOf[ShmRetrieveResult_Tag])
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
     val body = new ShmRetrieveResult_Body
   }
@@ -169,7 +157,7 @@ object LibMemory {
   }
   // End [Result] for shm_delete()
   class ShmDeleteResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val tag: Enum8[ShmDeleteResult_Tag] = new Enum8(classOf[ShmDeleteResult_Tag])
+    val tag: Enum[ShmDeleteResult_Tag] = new Enum(classOf[ShmDeleteResult_Tag])
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
     val body = new ShmDeleteResult_Body
   }

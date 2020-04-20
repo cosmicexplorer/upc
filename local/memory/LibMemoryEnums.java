@@ -2,7 +2,7 @@ package upc.local.memory;
 
 
 public class LibMemoryEnums {
-  public static enum ShmAllocateResult_Tag {
+  public static enum ShmAllocateResultStatus_Tag {
     AllocationSucceeded,
     DigestDidNotMatch,
     AllocationFailed,
