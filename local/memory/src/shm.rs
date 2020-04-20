@@ -332,7 +332,7 @@ impl ShmHandle {
       None => return Err(format!("could not locate shm mapping to delete: {:?}", self.key).into()),
     }
     let mut rc = unsafe { mmap_bindings::shmdt(self.mmap_addr) };
-    /* If the shmdt() call failed, move on to shmctl() to destroy it for all processes. */
+    /* If the shmdt() call *didn't* fail, move on to shmctl() to destroy it for all processes. */
     if rc == 0 {
       rc = unsafe {
         mmap_bindings::shmctl(

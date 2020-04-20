@@ -4,6 +4,7 @@ use memory::shm::*;
 
 use bazel_protos::remote_execution as remexec_api;
 use boxfuture::{BoxFuture, Boxable};
+use bytes::Bytes;
 use fs::FileContent;
 use hashing::{Digest, Fingerprint};
 use store::Store;
@@ -188,12 +189,7 @@ impl MerkleTrieNode {
     let bytes = component.extract_component_bytes();
     str::from_utf8(&bytes)
       .map(|p| p.to_string())
-      .map_err(|e| {
-        RemexecError::from(format!(
-          "error encoding path {:?} as utf8: {:?}",
-          bytes, e
-        ))
-      })
+      .map_err(|e| RemexecError::from(format!("error encoding path {:?} as utf8: {:?}", bytes, e)))
   }
 
   pub fn recursively_upload_trie(
@@ -214,14 +210,36 @@ impl MerkleTrieNode {
       }
     }
 
-    let mapped_file_nodes: Result<Vec<FileNode>, RemexecError> = files
+    let mapped_file_nodes: Vec<BoxFuture<FileNode, RemexecError>> = files
       .into_iter()
       .map(|(component, key)| {
-        Self::decode_utf8(component).map(|name| FileNode {
-          name,
-          key,
-          permissions: FilePermissions::None,
-        })
+        let retrieve_result: Result<ShmHandle, RemexecError> =
+          ShmHandle::new(ShmRetrieveRequest { key }.into())
+            .map_err(|e| RemexecError::InternalError(format!("{:?}", e)));
+
+        future::result(retrieve_result)
+          .and_then(|handle| {
+            LOCAL_STORE
+              .store_file_bytes(Bytes::from(&*handle), true)
+              .map_err(|e| RemexecError::InternalError(format!("{:?}", e)))
+          })
+          .and_then(move |digest| {
+            let expected_digest: Digest = key.into();
+            let result = if digest != expected_digest {
+              Err(RemexecError::InternalError(format!(
+                "expected uploaded digest {:?} to be equal to input shm key {:?}",
+                digest, key,
+              )))
+            } else {
+              Self::decode_utf8(component).map(|name| FileNode {
+                name,
+                key,
+                permissions: FilePermissions::None,
+              })
+            };
+            future::result(result)
+          })
+          .to_boxed()
       })
       .collect();
 
@@ -247,7 +265,7 @@ impl MerkleTrieNode {
     )
     .to_boxed();
 
-    let directory_proto: BoxFuture<remexec_api::Directory, _> = future::result(mapped_file_nodes)
+    let directory_proto: BoxFuture<remexec_api::Directory, _> = future::join_all(mapped_file_nodes)
       .join(mapped_dir_nodes)
       .map(|(files, directories)| MerkleTrieNode { files, directories })
       .map(|node| node.into())
@@ -270,6 +288,15 @@ pub fn expand_directory(digest: Digest) -> BoxFuture<Vec<FileContent>, String> {
   LOCAL_STORE.contents_for_directory(digest, PANTS_WORKUNIT_STORE.clone())
 }
 
+pub fn memory_map_file_content(bytes: &[u8]) -> Result<ShmHandle, RemexecError> {
+  let digest = Digest::of_bytes(bytes);
+  let key: ShmKey = digest.into();
+  let source: *const os::raw::c_void =
+    unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) };
+  let request = ShmAllocateRequest { key, source };
+  ShmHandle::new(request.into()).map_err(|e| format!("{:?}", e).into())
+}
+
 pub fn block_on_with_persistent_runtime<
   Item: Send + 'static,
   Error: Send + 'static,
@@ -282,8 +309,43 @@ pub fn block_on_with_persistent_runtime<
 
 #[cfg(test)]
 mod tests {
+  use super::*;
+  use crate::merkle_trie::{tests::*, *};
+
   #[test]
-  fn todo() {
-    assert!(false, "TODO");
+  fn directory_upload_expand_end_to_end() -> Result<(), RemexecError> {
+    let input: Vec<(PathComponents, &str)> = generate_example_input();
+
+    let mmapped_input: Vec<(PathComponents, ShmKey)> = input
+      .iter()
+      .map(|(c, s)| {
+        (
+          c.clone(),
+          memory_map_file_content(s.as_bytes()).unwrap().get_key(),
+        )
+      })
+      .collect();
+
+    let file_stats = make_file_stats(&mmapped_input);
+
+    let mut trie = MerkleTrie::<ShmKey>::new();
+    trie.populate(file_stats).unwrap();
+
+    let digest: DirectoryDigest =
+      block_on_with_persistent_runtime(MerkleTrieNode::recursively_upload_trie(trie))?;
+    let file_contents: Vec<FileContent> =
+      block_on_with_persistent_runtime(expand_directory(digest.into()))?;
+
+    let output: Vec<(PathComponents, &str)> = file_contents
+      .iter()
+      .map(|FileContent { path, content, .. }| {
+        (
+          PathComponents::from_path(&path).unwrap(),
+          str::from_utf8(&content).unwrap(),
+        )
+      })
+      .collect();
+    assert_eq!(input, output);
+    Ok(())
   }
 }

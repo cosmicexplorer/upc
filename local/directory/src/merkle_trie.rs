@@ -237,16 +237,18 @@ impl<File: Debug> MerkleTrie<File> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
   use super::*;
 
   use std::path::Path;
 
-  fn path_components(s: &str) -> Result<PathComponents, MerkleTrieError> {
+  pub fn path_components(s: &str) -> Result<PathComponents, MerkleTrieError> {
     PathComponents::from_path(Path::new(s))
   }
 
-  fn make_file_stats<'a, 'b>(input: &'a [(PathComponents, &'b str)]) -> Vec<FileStat<&'b str>> {
+  pub fn make_file_stats<'a, File: Copy>(
+    input: &'a [(PathComponents, File)],
+  ) -> Vec<FileStat<File>> {
     input
       .iter()
       .map(|(components, file)| FileStat {
@@ -256,13 +258,17 @@ mod tests {
       .collect()
   }
 
+  pub fn generate_example_input() -> Vec<(PathComponents, &'static str)> {
+    vec![
+      (path_components("a.txt").unwrap(), "this is a.txt!"),
+      (path_components("b.txt").unwrap(), "this is b.txt!"),
+      (path_components("d/e.txt").unwrap(), "this is d/e.txt!"),
+    ]
+  }
+
   #[test]
   fn populate_and_extract() -> Result<(), MerkleTrieError> {
-    let input: Vec<(PathComponents, &str)> = vec![
-      (path_components("a.txt")?, "this is a.txt!"),
-      (path_components("b.txt")?, "this is b.txt!"),
-      (path_components("d/e.txt")?, "this is d/e.txt!"),
-    ];
+    let input: Vec<(PathComponents, &str)> = generate_example_input();
     let file_stats = make_file_stats(&input);
 
     let mut trie = MerkleTrie::<&str>::new();

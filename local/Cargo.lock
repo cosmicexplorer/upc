@@ -576,6 +576,7 @@ version = "0.1.0"
 dependencies = [
  "bazel_protos",
  "boxfuture",
+ "bytes",
  "fs",
  "futures",
  "hashing",

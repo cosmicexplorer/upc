@@ -10,6 +10,7 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 bazel_protos = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/process_execution/bazel_protos" }
 boxfuture = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/boxfuture" }
+bytes = "0.4.5"
 fs = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs" }
 futures01 = { package = "futures", version = "0.1" }
 hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }

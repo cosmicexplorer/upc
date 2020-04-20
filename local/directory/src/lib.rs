@@ -218,17 +218,6 @@ pub enum ExpandDirectoriesResult {
   ExpandDirectoriesFailed(*mut os::raw::c_char),
 }
 
-fn memory_map_file_content(bytes: &[u8]) -> Result<ShmKey, DirectoryFFIError> {
-  let digest = Digest::of_bytes(bytes);
-  let key: ShmKey = digest.into();
-  let source: *const os::raw::c_void =
-    unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) };
-  let request = ShmAllocateRequest { key, source };
-  ShmHandle::new(request.into())
-    .map(|handle| handle.get_key())
-    .map_err(|e| format!("{:?}", e).into())
-}
-
 fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, DirectoryFFIError> {
   let pants_digest: Digest = digest.into();
   let all_files_content: BoxFuture<Vec<FileContent>, String> =
@@ -237,17 +226,20 @@ fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, Di
   all_files_content
     .map_err(|e| format!("{:?}", e).into())
     .and_then(|all_files_content| {
-      let file_uploads: Result<Vec<ShmKey>, _> = all_files_content
+      let file_uploads: Result<Vec<ShmHandle>, _> = all_files_content
         .iter()
-        .map(|file_content| memory_map_file_content(file_content.content.as_ref()))
+        .map(|file_content| {
+          remexec::memory_map_file_content(file_content.content.as_ref())
+            .map_err(|e| DirectoryFFIError::from(format!("{:?}", e)))
+        })
         .collect();
-      let as_path_stats: Result<PathStats, _> = file_uploads.map(|all_keys| {
+      let as_path_stats: Result<PathStats, _> = file_uploads.map(|all_handles| {
         let file_stats: Vec<FileStat> = all_files_content
           .into_iter()
-          .zip(all_keys)
-          .map(|(file_content, key)| FileStat {
+          .zip(all_handles)
+          .map(|(file_content, handle)| FileStat {
             rel_path: unsafe { ChildRelPath::from_path(&file_content.path) },
-            key,
+            key: handle.get_key(),
           })
           .collect();
         PathStats::from_slice(&file_stats)
@@ -377,11 +369,8 @@ pub unsafe extern "C" fn directories_upload(
 
 #[cfg(test)]
 mod tests {
-  #[allow(warnings)]
   #[test]
-  fn directory_upload_expand_end_to_end() {
-    let test_dir: Vec<(&str, &str)> = vec![("a.txt", "this is a.txt"), ("", "")];
-
-    assert_eq!(2 + 2, 5);
+  fn todo() {
+    assert!(false, "TODO");
   }
 }
