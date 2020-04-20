@@ -15,11 +15,13 @@ case class MemoryMappingReadError(message: String) extends ShmError(message)
 
 
 object MemoryMapping {
-  def fromByteBuffer(buf: ByteBuffer) = new MemoryMapping(Pointer.wrap(LibMemory.runtime, buf))
+  def fromByteBuffer(buf: ByteBuffer) = new MemoryMapping(Pointer.wrap(Shm.runtime, buf))
   def fromArray(buf: Array[Byte]) = fromByteBuffer(ByteBuffer.wrap(buf))
 }
 
 class MemoryMapping(private[upc] val pointer: Pointer) {
+  def size: Long = pointer.size
+
   def getBytesCopy: Array[Byte] = {
     val bytes: Array[Byte] = new Array(pointer.size.toInt)
     pointer.get(0, bytes, 0, pointer.size.toInt)
@@ -47,12 +49,16 @@ case class Fingerprint(fingerprint: Array[Byte]) {
   if (fingerprint.length != 32) {
     throw ShmNativeObjectEncodingError(s"invalid fingerprint: must be 32 bytes (was: $fingerprint)")
   }
+  private def asString = new String(fingerprint, "UTF-8")
+  override def toString: String = s"Fingerprint($asString)"
 }
 case class ShmKey(fingerprint: Fingerprint, length: Long) {
   if (length < 0) {
     throw ShmNativeObjectEncodingError(s"invalid ShmKey: length must be non-negative (was: $this)")
   }
 }
+
+case class ShmGetKeyRequest(source: MemoryMapping)
 
 case class ShmAllocateRequest(key: ShmKey, source: MemoryMapping)
 sealed abstract class ShmAllocateResult
@@ -99,6 +105,12 @@ object IntoNative {
 
   implicit object MemoryMappingIntoNative extends IntoNative[MemoryMapping, Pointer] {
     def intoNative(jvm: MemoryMapping): Try[Pointer] = Try(jvm.pointer)
+  }
+
+  implicit object ShmGetKeyRequestIntoNative
+      extends IntoNative[ShmGetKeyRequest, LibMemory.ShmGetKeyRequest] {
+    def intoNative(jvm: ShmGetKeyRequest): Try[LibMemory.ShmGetKeyRequest] = Try(
+      new LibMemory.ShmGetKeyRequest(jvm.source.size, jvm.source.intoNative().get))
   }
 
   implicit object ShmAllocateRequestIntoNative
@@ -191,4 +203,28 @@ object FromNative {
       }
     }
   }
+}
+
+object Shm {
+  import IntoNative._
+  import FromNative._
+
+  private[upc] lazy val (instance, runtime) = {
+    // val lib = LibMemory.setupLibrary(sys.env.get("LD_LIBRARY_PATH").get.split(":"))
+    val lib_path = Option(System.getProperty("ld.library.path")).get
+    val lib = LibMemory.setupLibrary(lib_path.split(":"))
+    (lib, LibMemory.runtime)
+  }
+
+  def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try(
+    instance.shm_get_key(request.intoNative().get).fromNative().get)
+
+  def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try(
+    instance.shm_allocate(request.intoNative().get).fromNative().get)
+
+  def retrieve(request: ShmRetrieveRequest): Try[ShmRetrieveResult] = Try(
+    instance.shm_retrieve(request.intoNative().get).fromNative().get)
+
+  def delete(request: ShmDeleteRequest): Try[ShmDeleteResult] = Try(
+    instance.shm_delete(request.intoNative().get).fromNative().get)
 }

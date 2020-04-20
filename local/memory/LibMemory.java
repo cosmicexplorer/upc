@@ -5,9 +5,18 @@ import jnr.ffi.types.*;
 
 
 public class LibMemory {
-  public static final LibMemoryIface libMemoryInstance =
-    LibraryLoader.create(LibMemoryIface.class).load("memory");
-  public static final jnr.ffi.Runtime runtime = jnr.ffi.Runtime.getRuntime(libMemoryInstance);
+  public static LibMemoryIface libMemoryInstance = null;
+  public static jnr.ffi.Runtime runtime = null;
+
+  public static LibMemoryIface setupLibrary(String[] paths) {
+    LibraryLoader<LibMemoryIface> loader = LibraryLoader.create(LibMemoryIface.class);
+    for (String path: paths) {
+      loader.search(path);
+    }
+    libMemoryInstance = loader.load("memory");
+    runtime = jnr.ffi.Runtime.getRuntime(libMemoryInstance);
+    return libMemoryInstance;
+  }
 
   public static class Error extends Exception {
     public Error(String message) {
@@ -19,6 +28,7 @@ public class LibMemory {
   }
 
   public static interface LibMemoryIface {
+    public ShmKey shm_get_key(ShmGetKeyRequest request);
     public ShmAllocateResult shm_allocate(ShmAllocateRequest request);
     public ShmRetrieveResult shm_retrieve(ShmRetrieveRequest request);
     public ShmDeleteResult shm_delete(ShmDeleteRequest request);
@@ -91,18 +101,18 @@ public class LibMemory {
   }
   public static class ShmKey extends Struct {
     public final Fingerprint fingerprint;
-    public final u_int32_t length;
+    public final u_int64_t length;
 
     public ShmKey() {
       super(runtime);
       fingerprint = new Fingerprint();
-      length = new u_int32_t();
+      length = new u_int64_t();
     }
 
     public ShmKey(Fingerprint fingerprintArg, long lengthArg) throws ShmKeyError {
       super(runtime);
       fingerprint = new Fingerprint();
-      length = new u_int32_t();
+      length = new u_int64_t();
       setFingerprint(fingerprintArg);
       setLength(lengthArg);
     }
@@ -110,7 +120,7 @@ public class LibMemory {
     public ShmKey(ShmKey otherShmKey) throws ShmKeyError {
       super(runtime);
       fingerprint = new Fingerprint();
-      length = new u_int32_t();
+      length = new u_int64_t();
       copyFrom(otherShmKey);
     }
 
@@ -140,6 +150,29 @@ public class LibMemory {
     public void copyFrom(ShmKey otherShmKey) throws ShmKeyError {
       setFingerprint(otherShmKey.getFingerprint());
       setLength(otherShmKey.getLength());
+    }
+  }
+
+  // shm_get_key() types!
+  public static class ShmGetKeyRequest extends Struct {
+    public final u_int64_t size;
+    public final Pointer source;
+
+    public ShmGetKeyRequest() {
+      super(runtime);
+      size = new u_int64_t();
+      source = new Pointer();
+    }
+
+    public ShmGetKeyRequest(long sizeArg, jnr.ffi.Pointer sourceArg) throws ShmKeyError {
+      super(runtime);
+      if (sizeArg < 0) {
+        throw new ShmKeyError("size cannot be negative -- was " + Long.toString(sizeArg));
+      }
+      size = new u_int64_t();
+      size.set(sizeArg);
+      source = new Pointer();
+      source.set(sourceArg);
     }
   }
 
@@ -211,6 +244,10 @@ public class LibMemory {
     public ShmAllocateResult() {
       super(runtime);
     }
+
+    public ShmAllocateResult(jnr.ffi.Runtime runtime) {
+      super(runtime);
+    }
   }
 
   // shm_retrieve() types!
@@ -269,6 +306,10 @@ public class LibMemory {
     public ShmRetrieveResult() {
       super(runtime);
     }
+
+    public ShmRetrieveResult(jnr.ffi.Runtime runtime) {
+      super(runtime);
+    }
   }
 
   // shm_delete() types!
@@ -324,6 +365,10 @@ public class LibMemory {
     public final ShmDeleteResult_Body body = new ShmDeleteResult_Body();
 
     public ShmDeleteResult() {
+      super(runtime);
+    }
+
+    public ShmDeleteResult(jnr.ffi.Runtime runtime) {
       super(runtime);
     }
   }

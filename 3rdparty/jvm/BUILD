@@ -34,6 +34,13 @@ jar_library(
 )
 
 jar_library(
+  name='scalatest',
+  jars=[
+    scala_jar(org='org.scalatest', name='scalatest', rev='3.0.0'),
+  ],
+)
+
+jar_library(
   name='thrift',
   jars=[
     jar(org='org.apache.thrift', name='libthrift', rev='0.10.0'),

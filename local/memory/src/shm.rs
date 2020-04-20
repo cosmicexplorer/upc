@@ -392,6 +392,28 @@ pub unsafe fn MAP_FAILED() -> *mut os::raw::c_void {
   mem::transmute::<i64, *mut os::raw::c_void>(-1)
 }
 
+#[repr(C)]
+pub struct ShmGetKeyRequest {
+  pub size: u64,
+  pub source: *const os::raw::c_void,
+}
+impl ShmGetKeyRequest {
+  pub unsafe fn as_slice(&self) -> &[u8] {
+    slice::from_raw_parts(
+      mem::transmute::<*const os::raw::c_void, *const u8>(self.source),
+      self.size as usize,
+    )
+  }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn shm_get_key(request: ShmGetKeyRequest) -> ShmKey {
+  let input_bytes = request.as_slice();
+  let digest = Digest::of_bytes(input_bytes);
+  let key: ShmKey = digest.into();
+  key
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn shm_retrieve(request: ShmRetrieveRequest) -> ShmRetrieveResult {
   match ShmHandle::new(request.into()) {
