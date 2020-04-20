@@ -36,6 +36,7 @@ use protobuf;
 
 use std::convert::{From, Into};
 use std::ffi::OsStr;
+use std::fmt::{self, Debug};
 use std::mem;
 use std::os::{self, unix::ffi::OsStrExt};
 use std::path::Path;
@@ -68,7 +69,7 @@ impl From<merkle_trie::MerkleTrieError> for DirectoryFFIError {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct DirectoryDigest {
   pub fingerprint: Fingerprint,
   pub size_bytes: u64,
@@ -102,12 +103,18 @@ impl ExpandDirectoriesRequest {
   pub unsafe fn as_slice(&self) -> &[DirectoryDigest] {
     slice::from_raw_parts(self.requests, self.num_requests as usize)
   }
+  pub fn from_slice(requests: &[DirectoryDigest]) -> Self {
+    ExpandDirectoriesRequest {
+      requests: requests.as_ptr(),
+      num_requests: requests.len() as u64,
+    }
+  }
 }
 unsafe impl Send for ExpandDirectoriesRequest {}
 unsafe impl Sync for ExpandDirectoriesRequest {}
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct ChildRelPath {
   relpath: *const os::raw::c_char,
   relpath_size: u64,
@@ -118,14 +125,21 @@ impl ChildRelPath {
     let slice: &[u8] = slice::from_raw_parts(bytes_ptr, self.relpath_size as usize);
     Path::new(OsStr::from_bytes(slice))
   }
-  pub unsafe fn from_path(path: &Path) -> Self {
+  pub unsafe fn leak_new_pointer_from_path(path: &Path) -> Self {
     let slice: &[u8] = path.as_os_str().as_bytes();
+    let owned: Vec<u8> = slice.to_vec();
+    let boxed: Box<[u8]> = owned.into();
     let relpath: *const os::raw::c_char =
-      mem::transmute::<*const u8, *const os::raw::c_char>(slice.as_ptr());
+      mem::transmute::<*const u8, *const os::raw::c_char>(Box::into_raw(boxed) as *const u8);
     ChildRelPath {
       relpath,
       relpath_size: slice.len() as u64,
     }
+  }
+}
+impl Debug for ChildRelPath {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "ChildRelPath({:?})", unsafe { self.as_path() })
   }
 }
 
@@ -170,7 +184,7 @@ unsafe impl Send for PathStats {}
 unsafe impl Sync for PathStats {}
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct ExpandDirectoriesMapping {
   digests: *mut DirectoryDigest,
   expansions: *mut PathStats,
@@ -210,6 +224,38 @@ impl ExpandDirectoriesMapping {
       ))
       .collect()
   }
+
+  fn into_owned_paired(&self) -> Vec<(DirectoryDigest, Vec<(std::path::PathBuf, ShmKey)>)> {
+    unsafe { self.into_paired() }
+      .into_iter()
+      .map(|(digest, path_stats)| {
+        (
+          *digest,
+          unsafe { path_stats.as_slice() }
+            .iter()
+            .map(|FileStat { rel_path, key }| (unsafe { rel_path.as_path() }.to_path_buf(), *key))
+            .collect(),
+        )
+      })
+      .collect()
+  }
+}
+impl PartialEq for ExpandDirectoriesMapping {
+  fn eq(&self, other: &Self) -> bool {
+    let owned_paired = self.into_owned_paired();
+    let other_paired = other.into_owned_paired();
+    owned_paired == other_paired
+  }
+}
+impl Eq for ExpandDirectoriesMapping {}
+impl Debug for ExpandDirectoriesMapping {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "ExpandDirectoriesMapping({:?})",
+      self.into_owned_paired()
+    )
+  }
 }
 unsafe impl Send for ExpandDirectoriesMapping {}
 unsafe impl Sync for ExpandDirectoriesMapping {}
@@ -240,9 +286,11 @@ fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, Di
         let file_stats: Vec<FileStat> = all_files_content
           .into_iter()
           .zip(all_handles)
-          .map(|(file_content, handle)| FileStat {
-            rel_path: unsafe { ChildRelPath::from_path(&file_content.path) },
-            key: handle.get_key(),
+          .map(|(file_content, handle)| {
+            FileStat {
+              rel_path: unsafe { ChildRelPath::leak_new_pointer_from_path(&file_content.path) },
+              key: handle.get_key(),
+            }
           })
           .collect();
         PathStats::from_slice(&file_stats)
@@ -407,7 +455,7 @@ mod tests {
     let ffi_input: Vec<FileStat> = ffi_mapped
       .iter()
       .map(|(path, key)| {
-        let rel_path = unsafe { ChildRelPath::from_path(&path) };
+        let rel_path = unsafe { ChildRelPath::leak_new_pointer_from_path(&path) };
         FileStat {
           rel_path,
           key: *key,
@@ -415,15 +463,16 @@ mod tests {
       })
       .collect();
     let input_path_stats = vec![PathStats::from_slice(&ffi_input)];
+
     let upload_request = UploadDirectoriesRequest::from_slice(&input_path_stats);
 
     let uploaded_mapping = match unsafe { directories_upload(upload_request) } {
       UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping) => mapping,
-      UploadDirectoriesResult::UploadDirectoriesFailed(e_str) => unreachable!(),
+      UploadDirectoriesResult::UploadDirectoriesFailed(_) => unreachable!(),
     };
     let uploaded = unsafe { uploaded_mapping.into_paired() };
     assert_eq!(1, uploaded.len());
-    let (_dir_digest, path_stats) = uploaded.get(0).unwrap();
+    let (dir_digest, path_stats) = uploaded.get(0).unwrap();
 
     let ffi_output = unsafe { path_stats.as_slice() }.to_vec();
     let ffi_input_vec: Vec<merkle_trie::FileStat<ShmKey>> =
@@ -432,7 +481,14 @@ mod tests {
       ffi_output.iter().map(|stat| stat.clone().into()).collect();
     assert_eq!(ffi_input_vec, ffi_output_vec);
 
-    /* TODO: check that expanded dir also has the same! */
+    /* Check that expanded dir also has the same contents! */
+    let expand_request = ExpandDirectoriesRequest::from_slice(&vec![**dir_digest]);
+    let expanded_mapping = match unsafe { directories_expand(expand_request) } {
+      ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping) => mapping,
+      ExpandDirectoriesResult::ExpandDirectoriesFailed(_) => unreachable!(),
+    };
+    assert_eq!(uploaded_mapping, expanded_mapping);
+
     Ok(())
   }
 }
