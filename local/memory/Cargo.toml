@@ -17,3 +17,5 @@ uuid = { version = "0.8", features = ["v4"] }
 
 [build-dependencies]
 bindgen = "0.53.2"
+cbindgen = "0.8.6"
+walkdir = "2"

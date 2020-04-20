@@ -1,6 +1,6 @@
 package upc.local.memory
 
-import jnr.ffi.Pointer
+import _root_.jnr.ffi.Pointer
 
 import java.nio.ByteBuffer
 import scala.util.Try
@@ -22,7 +22,7 @@ object MemoryMapping {
 class MemoryMapping(private[upc] val pointer: Pointer) {
   def size: Long = pointer.size
 
-  def getBytesCopy: Array[Byte] = {
+  lazy val getBytes: Array[Byte] = {
     val bytes: Array[Byte] = new Array(pointer.size.toInt)
     pointer.get(0, bytes, 0, pointer.size.toInt)
     bytes
@@ -150,7 +150,7 @@ object FromNative {
   implicit object FingerprintFromNative
       extends FromNative[Fingerprint, LibMemory.Fingerprint] {
     def fromNative(native: LibMemory.Fingerprint): Try[Fingerprint] = Try(
-      Fingerprint(native.getBytesCopy))
+      Fingerprint(native.getBytes))
   }
   implicit object ShmKeyFromNative
       extends FromNative[ShmKey, LibMemory.ShmKey] {

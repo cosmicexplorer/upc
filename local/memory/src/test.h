@@ -141,9 +141,11 @@
 
 #define S_IXUSR 64
 
+typedef uint32_t SizeType;
+
 typedef struct {
+  SizeType size_bytes;
   Fingerprint fingerprint;
-  uint64_t size_bytes;
 } ShmKey;
 
 typedef enum {
@@ -198,6 +200,11 @@ typedef struct {
 typedef struct {
   ShmKey key;
 } ShmDeleteRequest;
+
+typedef struct {
+  SizeType size;
+  const void *source;
+} ShmGetKeyRequest;
 
 typedef enum {
   RetrieveSucceeded,
@@ -280,6 +287,8 @@ typedef struct {
 ShmAllocateResult shm_allocate(ShmAllocateRequest request);
 
 ShmDeleteResult shm_delete(ShmDeleteRequest request);
+
+ShmKey *shm_get_key(const ShmGetKeyRequest *request);
 
 ShmRetrieveResult shm_retrieve(ShmRetrieveRequest request);
 

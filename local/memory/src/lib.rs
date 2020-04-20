@@ -25,4 +25,4 @@
 mod mmap_bindings;
 pub mod shm;
 
-pub use shm::{shm_get_key, shm_allocate, shm_retrieve, shm_delete};
+pub use shm::{shm_allocate, shm_delete, shm_get_key, shm_retrieve};

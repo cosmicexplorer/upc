@@ -2,6 +2,7 @@ java_library(
   name='libmemory',
   dependencies=[
     '3rdparty/jvm:jnr-ffi',
+    'local/memory/jnr',
   ],
 )
 

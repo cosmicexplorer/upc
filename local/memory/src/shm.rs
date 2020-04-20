@@ -18,6 +18,9 @@ use std::slice;
 use std::str;
 use std::sync::Arc;
 
+
+type SizeType = u32;
+
 lazy_static! {
   static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> =
     Arc::new(RwLock::new(HashMap::new()));
@@ -39,8 +42,8 @@ impl From<String> for ShmError {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ShmKey {
+  pub size_bytes: SizeType,
   pub fingerprint: Fingerprint,
-  pub size_bytes: u64,
 }
 
 impl From<ShmKey> for key_t {
@@ -60,7 +63,7 @@ impl From<Digest> for ShmKey {
     let Digest(fingerprint, size_bytes) = digest;
     ShmKey {
       fingerprint,
-      size_bytes: size_bytes as u64,
+      size_bytes: size_bytes as SizeType,
     }
   }
 }
@@ -394,7 +397,7 @@ pub unsafe fn MAP_FAILED() -> *mut os::raw::c_void {
 
 #[repr(C)]
 pub struct ShmGetKeyRequest {
-  pub size: u64,
+  pub size: SizeType,
   pub source: *const os::raw::c_void,
 }
 impl ShmGetKeyRequest {
@@ -406,12 +409,20 @@ impl ShmGetKeyRequest {
   }
 }
 
+/* #[no_mangle] */
+/* pub unsafe extern "C" fn shm_get_key(request: &ShmGetKeyRequest) -> ShmKey { */
+/*   let input_bytes = request.as_slice(); */
+/*   let digest = Digest::of_bytes(input_bytes); */
+/*   let key: ShmKey = digest.into(); */
+/*   key */
+/* } */
+
 #[no_mangle]
-pub unsafe extern "C" fn shm_get_key(request: ShmGetKeyRequest) -> ShmKey {
+pub unsafe extern "C" fn shm_get_key(request: &ShmGetKeyRequest) -> *mut ShmKey {
   let input_bytes = request.as_slice();
   let digest = Digest::of_bytes(input_bytes);
   let key: ShmKey = digest.into();
-  key
+  Box::into_raw(Box::new(key)) as *mut ShmKey
 }
 
 #[no_mangle]
@@ -481,7 +492,7 @@ mod tests {
       size: known_source.len() as u64,
       source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(known_source.as_ptr()) },
     };
-    let key = unsafe { shm_get_key(get_key_request) };
+    let key = unsafe { shm_get_key(&get_key_request) };
     assert_eq!(
       key,
       ShmKey {

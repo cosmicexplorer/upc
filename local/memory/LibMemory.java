@@ -3,6 +3,8 @@ package upc.local.memory;
 import jnr.ffi.*;
 import jnr.ffi.types.*;
 
+// import upc.local.memory.jnr.Fingerprint;
+
 
 public class LibMemory {
   public static LibMemoryIface libMemoryInstance = null;
@@ -35,120 +37,23 @@ public class LibMemory {
   }
 
   // common types!
-  public static class FingerprintError extends Error {
-    public FingerprintError(String message) {
-      super(message);
-    }
-    public FingerprintError(String message, Throwable cause) {
-      super(message, cause);
-    }
-  }
-  public static class Fingerprint extends Struct {
-    public final Padding _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
-
-    public static final int FINGERPRINT_LENGTH = 32;
-
-    public Fingerprint() {
-      super(runtime);
-    }
-
-    public Fingerprint(jnr.ffi.Runtime runtime) {
-      super(runtime);
-    }
-
-    public Fingerprint(byte[] bytes) throws FingerprintError {
+  public static class Fingerprint extends upc.local.memory.jnr.Fingerprint {
+    public Fingerprint(byte[] bytes) {
       super(runtime);
       setBytes(bytes);
     }
-
-    public Fingerprint(Fingerprint otherFingerprint) throws FingerprintError {
-      super(runtime);
-      copyFrom(otherFingerprint);
-    }
-
-    public void setBytes(byte[] bytes) throws FingerprintError {
-      if (bytes.length != FINGERPRINT_LENGTH) {
-        throw new FingerprintError("fingerprint bytes must be " +
-                                   Integer.toString(FINGERPRINT_LENGTH) +
-                                   " bytes long -- instead received + " +
-                                   Integer.toString(bytes.length));
-      }
-      jnr.ffi.Pointer paddingBytes = _0.getMemory();
-      paddingBytes.put(0, bytes, 0, bytes.length);
-    }
-
-    public byte[] getBytesCopy() {
-      byte[] bytes = new byte[FINGERPRINT_LENGTH];
-      jnr.ffi.Pointer paddingBytes = _0.getMemory();
-      paddingBytes.get(0, bytes, 0, FINGERPRINT_LENGTH);
-      return bytes;
-    }
-
-    /* FIXME: can we avoid bubbling up `throws FingerprintError` here since we know that the other
-     * fingerprint will have the correct number of bytes? */
-    public void copyFrom(Fingerprint otherFingerprint) throws FingerprintError {
-      byte[] otherBytes = otherFingerprint.getBytesCopy();
-      setBytes(otherBytes);
-    }
   }
 
-  public static class ShmKeyError extends Error {
-    public ShmKeyError(String message) {
-      super(message);
-    }
-    public ShmKeyError(String message, Throwable cause) {
-      super(message, cause);
-    }
-  }
-  public static class ShmKey extends Struct {
-    public final Fingerprint fingerprint = new Fingerprint();
-    public final u_int64_t length = new u_int64_t();
-
-    public ShmKey() {
-      super(runtime);
-    }
-
-    public ShmKey(jnr.ffi.Runtime runtime) {
-      super(runtime);
-    }
-
-    public ShmKey(Fingerprint fingerprintArg, long lengthArg) throws ShmKeyError {
+  public static class ShmKey extends upc.local.memory.jnr.ShmKey {
+    public ShmKey(Fingerprint fingerprintArg, long lengthArg) {
       super(runtime);
       setFingerprint(fingerprintArg);
       setLength(lengthArg);
     }
 
-    public ShmKey(ShmKey otherShmKey) throws ShmKeyError {
+    public ShmKey(ShmKey otherShmKey) {
       super(runtime);
       copyFrom(otherShmKey);
-    }
-
-    public void setFingerprint(Fingerprint otherFingerprint) throws ShmKeyError {
-      try {
-        fingerprint.copyFrom(otherFingerprint);
-      } catch (FingerprintError e) {
-        throw new ShmKeyError("fingerprint encoding error", e);
-      }
-    }
-
-    public Fingerprint getFingerprint() {
-      return fingerprint;
-    }
-
-    public void setLength(long otherLength) throws ShmKeyError {
-      if (otherLength < 0) {
-        throw new ShmKeyError("length cannot be negative -- was " + Long.toString(otherLength));
-      }
-      length.set(otherLength);
-    }
-
-    public long getLength() {
-      return length.get();
-    }
-
-    public void copyFrom(ShmKey otherShmKey) throws ShmKeyError {
-      setFingerprint(otherShmKey.getFingerprint());
-      setLength(otherShmKey.getLength());
     }
   }
 

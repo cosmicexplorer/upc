@@ -277,6 +277,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbindgen"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f861ef68cabbb271d373a7795014052bff37edce22c620d95e395e8719d7dc5"
+dependencies = [
+ "clap",
+ "log",
+ "proc-macro2 0.4.30",
+ "quote 0.6.13",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "syn 0.15.44",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -947,12 +965,14 @@ dependencies = [
 name = "hashing"
 version = "0.0.1"
 dependencies = [
+ "cbindgen",
  "digest",
  "hex",
  "serde",
  "serde_derive",
  "serde_test",
  "sha2",
+ "walkdir 2.3.1",
 ]
 
 [[package]]
@@ -1292,12 +1312,14 @@ name = "memory"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "cbindgen",
  "hashing",
  "lazy_static",
  "parking_lot 0.6.4",
  "serde",
  "serde_derive",
  "uuid 0.8.1",
+ "walkdir 2.3.1",
 ]
 
 [[package]]
