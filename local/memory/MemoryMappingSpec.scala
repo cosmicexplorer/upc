@@ -17,8 +17,7 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
 
   "The Shm object" should "successfully retrieve the correct ShmKey for a string" in {
     val knownSource = "asdf".getBytes
-    val ptr = Memory.allocate(runtime, knownSource.length)
-    ptr.put(0, knownSource, 0, knownSource.length)
+    val ptr = intoDirectPointer(knownSource)
     val req = ShmGetKeyRequest(ptr)
     val key = instance.shm_get_key(req)
     key.getSize should be (knownSource.length)
@@ -28,8 +27,7 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
 
   it should "successfully allocate and retrieve shared memory" in {
     val randomSource = UUID.randomUUID().toString.getBytes
-    val ptr = Memory.allocate(runtime, randomSource.length)
-    ptr.put(0, randomSource, 0, randomSource.length)
+    val ptr = intoDirectPointer(randomSource)
 
     val key_req = ShmGetKeyRequest(ptr)
     val key = instance.shm_get_key(key_req)

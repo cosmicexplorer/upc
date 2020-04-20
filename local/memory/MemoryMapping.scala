@@ -91,18 +91,6 @@ case class DeleteInternalError(error: String) extends ShmDeleteError(s"deletion 
 //     def intoNative(): Try[NativeType] = ctx.intoNative(jvm)
 //   }
 
-//   implicit object FingerprintIntoNative extends IntoNative[Fingerprint, LibMemory.Fingerprint] {
-//     def intoNative(jvm: Fingerprint): Try[LibMemory.Fingerprint] = Try{
-//       new LibMemory.Fingerprint(jvm.fingerprint)}
-//   }
-//   implicit object ShmKeyIntoNative extends IntoNative[ShmKey, LibMemory.ShmKey] {
-//     def intoNative(jvm: ShmKey): Try[LibMemory.ShmKey] = Try(
-//       new LibMemory.ShmKey(
-//         jvm.fingerprint.intoNative().get,
-//         jvm.length,
-//       ))
-//   }
-
 //   implicit object MemoryMappingIntoNative extends IntoNative[MemoryMapping, Pointer] {
 //     def intoNative(jvm: MemoryMapping): Try[Pointer] = Try(jvm.pointer)
 //   }
@@ -147,11 +135,6 @@ case class DeleteInternalError(error: String) extends ShmDeleteError(s"deletion 
 //     def fromNative(): Try[JvmType] = ctx.fromNative(native)
 //   }
 
-//   implicit object FingerprintFromNative
-//       extends FromNative[Fingerprint, LibMemory.Fingerprint] {
-//     def fromNative(native: LibMemory.Fingerprint): Try[Fingerprint] = Try(
-//       Fingerprint(native.getBytes))
-//   }
 //   implicit object ShmKeyFromNative
 //       extends FromNative[ShmKey, LibMemory.ShmKey] {
 //     def fromNative(native: LibMemory.ShmKey): Try[ShmKey] = Try(ShmKey(

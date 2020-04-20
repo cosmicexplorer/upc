@@ -25,6 +25,12 @@ object LibMemory {
   }
   lazy val runtime = Runtime.getRuntime(instance)
 
+  private[upc] def intoDirectPointer(bytes: Array[Byte]): Pointer = {
+    val ptr = Memory.allocateDirect(runtime, bytes.length)
+    ptr.put(0, bytes, 0, bytes.length)
+    ptr
+  }
+
   // Used in almost every request object.
   class ShmKey(runtime: Runtime = runtime) extends Struct(runtime) {
     import ShmKey._
@@ -129,5 +135,33 @@ object LibMemory {
     val tag: Enum8[ShmRetrieveResult_Tag] = new Enum8(classOf[ShmRetrieveResult_Tag])
     // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
     val body = new ShmRetrieveResult_Body
+  }
+
+  // [Request] for shm_delete()
+  class ShmDeleteRequest(runtime: Runtime = runtime) extends Struct(runtime) {
+    val key = new ShmKey
+  }
+  object ShmDeleteRequest {
+    def apply(key: ShmKey): ShmDeleteRequest = {
+      val ret = new ShmDeleteRequest
+      ret.key.copyFrom(key)
+      ret
+    }
+  }
+  // [Result]* for shm_delete()
+  class DeleteSucceeded_Body(runtime: Runtime = runtime) extends Struct(runtime) {
+    val _0 = new Pointer
+  }
+  class DeleteInternalError_Body(runtime: Runtime = runtime) extends Struct(runtime) {
+    val _0 = new Pointer
+  }
+  class ShmDeleteResult_Body(runtime: Runtime = runtime) extends Union(runtime) {
+    val delete_internal_error = new DeleteInternalError_Body
+  }
+  // End [Result] for shm_delete()
+  class ShmDeleteResult(runtime: Runtime = runtime) extends Struct(runtime) {
+    val tag: Enum8[ShmDeleteResult_Tag] = new Enum8(classOf[ShmDeleteResult_Tag])
+    // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
+    val body = new ShmDeleteResult_Body
   }
 }
