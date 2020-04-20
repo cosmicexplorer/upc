@@ -110,7 +110,7 @@ object IntoNative {
   implicit object ShmGetKeyRequestIntoNative
       extends IntoNative[ShmGetKeyRequest, LibMemory.ShmGetKeyRequest] {
     def intoNative(jvm: ShmGetKeyRequest): Try[LibMemory.ShmGetKeyRequest] = Try(
-      new LibMemory.ShmGetKeyRequest(jvm.source.size, jvm.source.intoNative().get))
+      new LibMemory.ShmGetKeyRequest(jvm.source.intoNative().get))
   }
 
   implicit object ShmAllocateRequestIntoNative
@@ -209,15 +209,20 @@ object Shm {
   import IntoNative._
   import FromNative._
 
-  private[upc] lazy val (instance, runtime) = {
+  private[upc] val (instance, runtime) = {
     // val lib = LibMemory.setupLibrary(sys.env.get("LD_LIBRARY_PATH").get.split(":"))
-    val lib_path = Option(System.getProperty("ld.library.path")).get
+    val lib_path = "/Users/dmcclanahan/projects/active/upc/local/target/debug"
+    // val lib_path = Option(System.getProperty("ld.library.path")).get
     val lib = LibMemory.setupLibrary(lib_path.split(":"))
     (lib, LibMemory.runtime)
   }
 
-  def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try(
-    instance.shm_get_key(request.intoNative().get).fromNative().get)
+  def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try {
+    val req = request.intoNative().get
+    req.toString
+    // throw new RuntimeException(req.toString)
+    instance.shm_get_key(req).fromNative().get
+  }
 
   def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try(
     instance.shm_allocate(request.intoNative().get).fromNative().get)

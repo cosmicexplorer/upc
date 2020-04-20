@@ -8,7 +8,8 @@ jar_library(
 jar_library(
   name='jnr-ffi',
   jars=[
-    jar(org='com.github.jnr', name='jnr-ffi', rev='2.1.12'),
+    jar(org='com.github.jnr', name='jnr-ffi', rev='2.1.13-SNAPSHOT',
+        mutable=True),
   ],
 )
 

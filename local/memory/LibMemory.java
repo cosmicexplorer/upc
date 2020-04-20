@@ -44,24 +44,25 @@ public class LibMemory {
     }
   }
   public static class Fingerprint extends Struct {
-    public final Padding _0;
+    public final Padding _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
 
     public static final int FINGERPRINT_LENGTH = 32;
 
     public Fingerprint() {
       super(runtime);
-      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
+    }
+
+    public Fingerprint(jnr.ffi.Runtime runtime) {
+      super(runtime);
     }
 
     public Fingerprint(byte[] bytes) throws FingerprintError {
       super(runtime);
-      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
       setBytes(bytes);
     }
 
     public Fingerprint(Fingerprint otherFingerprint) throws FingerprintError {
       super(runtime);
-      _0 = new Padding(NativeType.UCHAR, FINGERPRINT_LENGTH);
       copyFrom(otherFingerprint);
     }
 
@@ -100,33 +101,25 @@ public class LibMemory {
     }
   }
   public static class ShmKey extends Struct {
-    public final Fingerprint fingerprint;
-    public final u_int64_t length;
+    public final Fingerprint fingerprint = new Fingerprint();
+    public final u_int64_t length = new u_int64_t();
 
     public ShmKey() {
       super(runtime);
-      fingerprint = new Fingerprint();
-      length = new u_int64_t();
     }
 
     public ShmKey(jnr.ffi.Runtime runtime) {
       super(runtime);
-      fingerprint = new Fingerprint();
-      length = new u_int64_t();
     }
 
     public ShmKey(Fingerprint fingerprintArg, long lengthArg) throws ShmKeyError {
       super(runtime);
-      fingerprint = new Fingerprint();
-      length = new u_int64_t();
       setFingerprint(fingerprintArg);
       setLength(lengthArg);
     }
 
     public ShmKey(ShmKey otherShmKey) throws ShmKeyError {
       super(runtime);
-      fingerprint = new Fingerprint();
-      length = new u_int64_t();
       copyFrom(otherShmKey);
     }
 
@@ -161,47 +154,43 @@ public class LibMemory {
 
   // shm_get_key() types!
   public static class ShmGetKeyRequest extends Struct {
-    public final u_int64_t size;
-    public final Pointer source;
+    public final Pointer source = new Pointer();
 
     public ShmGetKeyRequest() {
       super(runtime);
-      size = new u_int64_t();
-      source = new Pointer();
     }
 
-    public ShmGetKeyRequest(long sizeArg, jnr.ffi.Pointer sourceArg) throws ShmKeyError {
+    public ShmGetKeyRequest(jnr.ffi.Runtime runtime) {
       super(runtime);
-      if (sizeArg < 0) {
-        throw new ShmKeyError("size cannot be negative -- was " + Long.toString(sizeArg));
-      }
-      size = new u_int64_t();
-      // NB: If this line is put below the size.set(sizeArg), we get an error on the following
-      // source.set(sourceArg) because the struct appears to think it only has 8 bytes of storage
-      // (it has an ArrayIndexOutOfBoundsException at offset 8 when trying to set the pointer) -- so
-      // it's possible that calling size.set() finalizes the maximum size of the object somehow, in
-      // a way that isn't updated when we call source = new Pointer() afterwards.
-      source = new Pointer();
-      size.set(sizeArg);
+    }
+
+    public ShmGetKeyRequest(jnr.ffi.Pointer sourceArg) throws ShmKeyError {
+      super(runtime);
       source.set(sourceArg);
     }
+
+    // @Override
+    // public java.lang.String toString() {
+    //   return "ShmGetKeyRequest { " + "source = " + source.size() + " }";
+    // }
   }
 
   // shm_allocate() types!
   public static class ShmAllocateRequest extends Struct {
-    public final ShmKey key;
-    public final Pointer source;
+    public final ShmKey key = new ShmKey();
+    public final Pointer source = new Pointer();
 
     public ShmAllocateRequest() {
       super(runtime);
-      key = new ShmKey();
-      source = new Pointer();
     }
 
-    public ShmAllocateRequest(ShmKey keyArg, jnr.ffi.Pointer sourceArg) {
+    public ShmAllocateRequest(jnr.ffi.Runtime runtime) {
       super(runtime);
-      key = keyArg;
-      source = new Pointer();
+    }
+
+    public ShmAllocateRequest(ShmKey keyArg, jnr.ffi.Pointer sourceArg) throws ShmKeyError {
+      super(runtime);
+      key.copyFrom(keyArg);
       source.set(sourceArg);
     }
   }
