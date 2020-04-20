@@ -116,22 +116,11 @@ object LibMemory {
       ret
     }
   }
-  // [Result]* for shm_retrieve()
-  class RetrieveSucceeded_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class RetrieveInternalError_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class ShmRetrieveResult_Body(runtime: Runtime = runtime) extends Union(runtime) {
-    val retrieve_succeeded = new RetrieveSucceeded_Body
-    val retrieve_internal_error = new RetrieveInternalError_Body
-  }
-  // End [Result] for shm_retrieve()
+  // [Result] for shm_retrieve()
   class ShmRetrieveResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val tag: Enum[ShmRetrieveResult_Tag] = new Enum(classOf[ShmRetrieveResult_Tag])
-    // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
-    val body = new ShmRetrieveResult_Body
+    val status: Enum[ShmRetrieveResultStatus_Tag] = new Enum(classOf[ShmRetrieveResultStatus_Tag])
+    val address = new Pointer
+    val error = new Pointer
   }
 
   // [Request] for shm_delete()
@@ -145,20 +134,9 @@ object LibMemory {
       ret
     }
   }
-  // [Result]* for shm_delete()
-  class DeleteSucceeded_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class DeleteInternalError_Body(runtime: Runtime = runtime) extends Struct(runtime) {
-    val _0 = new Pointer
-  }
-  class ShmDeleteResult_Body(runtime: Runtime = runtime) extends Union(runtime) {
-    val delete_internal_error = new DeleteInternalError_Body
-  }
-  // End [Result] for shm_delete()
+  // [Result] for shm_delete()
   class ShmDeleteResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val tag: Enum[ShmDeleteResult_Tag] = new Enum(classOf[ShmDeleteResult_Tag])
-    // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
-    val body = new ShmDeleteResult_Body
+    val status: Enum[ShmDeleteResultStatus_Tag] = new Enum(classOf[ShmDeleteResultStatus_Tag])
+    val error = new Pointer
   }
 }

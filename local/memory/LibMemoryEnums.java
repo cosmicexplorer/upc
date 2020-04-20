@@ -8,13 +8,13 @@ public class LibMemoryEnums {
     AllocationFailed,
   }
 
-  public static enum ShmRetrieveResult_Tag {
+  public static enum ShmRetrieveResultStatus_Tag {
     RetrieveSucceeded,
     RetrieveDidNotExist,
     RetrieveInternalError,
   }
 
-  public static enum ShmDeleteResult_Tag {
+  public static enum ShmDeleteResultStatus_Tag {
     DeletionSucceeded,
     DeleteDidNotExist,
     DeleteInternalError,

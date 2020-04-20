@@ -106,10 +106,41 @@ impl From<ShmRetrieveRequest> for ShmRequest {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ShmRetrieveResult {
-  RetrieveSucceeded(*const os::raw::c_void),
+pub enum ShmRetrieveResultStatus {
+  RetrieveSucceeded,
   RetrieveDidNotExist,
-  RetrieveInternalError(*mut os::raw::c_char),
+  RetrieveInternalError,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ShmRetrieveResult {
+  pub status: ShmRetrieveResultStatus,
+  pub address: *const os::raw::c_void,
+  pub error: *mut os::raw::c_char,
+}
+impl ShmRetrieveResult {
+  pub fn successful(address: *const os::raw::c_void) -> Self {
+    ShmRetrieveResult {
+      status: ShmRetrieveResultStatus::RetrieveSucceeded,
+      address,
+      error: ptr::null_mut(),
+    }
+  }
+  pub fn did_not_exist() -> Self {
+    ShmRetrieveResult {
+      status: ShmRetrieveResultStatus::RetrieveDidNotExist,
+      address: ptr::null(),
+      error: ptr::null_mut(),
+    }
+  }
+  pub fn errored(error: *mut os::raw::c_char) -> Self {
+    ShmRetrieveResult {
+      status: ShmRetrieveResultStatus::RetrieveInternalError,
+      address: ptr::null(),
+      error,
+    }
+  }
 }
 
 #[repr(C)]
@@ -137,6 +168,9 @@ pub enum ShmAllocateResultStatus {
   AllocationFailed,
 }
 
+/* FIXME: Using enums with entries inside of each case causes jnr-ffi to read structs as zeroed for
+ * some reason. We're not too concerned about the size of these packets, so having fields for every
+ * eventuality won't hurt too much. */
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ShmAllocateResult {
@@ -196,10 +230,38 @@ impl From<ShmDeleteRequest> for ShmRequest {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ShmDeleteResult {
+pub enum ShmDeleteResultStatus {
   DeletionSucceeded,
   DeleteDidNotExist,
-  DeleteInternalError(*mut os::raw::c_char),
+  DeleteInternalError,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ShmDeleteResult {
+  pub status: ShmDeleteResultStatus,
+  pub error: *mut os::raw::c_char,
+}
+impl ShmDeleteResult {
+  pub fn successful() -> Self {
+    ShmDeleteResult {
+      status: ShmDeleteResultStatus::DeletionSucceeded,
+      error: ptr::null_mut(),
+    }
+  }
+  pub fn did_not_exist() -> Self {
+    ShmDeleteResult {
+      status: ShmDeleteResultStatus::DeleteDidNotExist,
+      error: ptr::null_mut(),
+    }
+  }
+  pub fn internal_error(error: *mut os::raw::c_char) -> Self {
+    assert!(!error.is_null());
+    ShmDeleteResult {
+      status: ShmDeleteResultStatus::DeleteInternalError,
+      error,
+    }
+  }
 }
 
 #[derive(Copy, Clone)]
@@ -475,11 +537,11 @@ pub unsafe extern "C" fn shm_retrieve(
   result: *mut ShmRetrieveResult,
 ) {
   *result = match ShmHandle::new((*request).into()) {
-    Ok(shm_handle) => ShmRetrieveResult::RetrieveSucceeded(shm_handle.get_base_address()),
-    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::RetrieveDidNotExist,
+    Ok(shm_handle) => ShmRetrieveResult::successful(shm_handle.get_base_address()),
+    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist(),
     Err(e) => {
       let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmRetrieveResult::RetrieveInternalError(error_message.leak_null_terminated_c_string())
+      ShmRetrieveResult::errored(error_message.leak_null_terminated_c_string())
     }
   };
 }
@@ -492,7 +554,7 @@ pub unsafe extern "C" fn shm_allocate(
   *result = match ShmHandle::new((*request).into()) {
     /* Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()), */
     Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address()),
-    Err(ShmError::DigestDidNotMatch(_shm_key)) => ShmAllocateResult::mismatched_digest(),
+    Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
     Err(e) => {
       let error = format!("{:?}", e);
       let error_message = CCharErrorMessage::new(error);
@@ -508,11 +570,11 @@ pub unsafe extern "C" fn shm_delete(
 ) {
   *result = match ShmHandle::new((*request).into()).and_then(|mut handle| handle.destroy_mapping())
   {
-    Ok(()) => ShmDeleteResult::DeletionSucceeded,
-    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
+    Ok(()) => ShmDeleteResult::successful(),
+    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::did_not_exist(),
     Err(e) => {
       let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmDeleteResult::DeleteInternalError(error_message.leak_null_terminated_c_string())
+      ShmDeleteResult::internal_error(error_message.leak_null_terminated_c_string())
     }
   };
 }

@@ -39,10 +39,8 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
     }
     shared_mapping.getBytes should be (randomSource)
 
-    // val req = ShmRetrieveRequest()
-    // val mapping = MemoryMapping.fromArray(randomSource.getBytes)
-    // val request = ShmAllocateRequest(mapping)
-    // val result = Shm.allocate(request)
-    // result should be a [Success]
+    val retrieve_req = ShmRetrieveRequest(key)
+    val retrieve_result = Shm.retrieve(retrieve_req).get
+    // retrieve_result should be a [Success]
   }
 }

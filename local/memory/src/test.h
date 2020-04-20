@@ -147,6 +147,18 @@ typedef enum {
   AllocationFailed,
 } ShmAllocateResultStatus;
 
+typedef enum {
+  DeletionSucceeded,
+  DeleteDidNotExist,
+  DeleteInternalError,
+} ShmDeleteResultStatus;
+
+typedef enum {
+  RetrieveSucceeded,
+  RetrieveDidNotExist,
+  RetrieveInternalError,
+} ShmRetrieveResultStatus;
+
 typedef uint32_t SizeType;
 
 typedef struct {
@@ -161,6 +173,7 @@ typedef struct {
 
 typedef struct {
   ShmAllocateResultStatus status;
+  ShmKey correct_key;
   const void *address;
   char *error;
 } ShmAllocateResult;
@@ -169,21 +182,9 @@ typedef struct {
   ShmKey key;
 } ShmDeleteRequest;
 
-typedef enum {
-  DeletionSucceeded,
-  DeleteDidNotExist,
-  DeleteInternalError,
-} ShmDeleteResult_Tag;
-
 typedef struct {
-  char *_0;
-} DeleteInternalError_Body;
-
-typedef struct {
-  ShmDeleteResult_Tag tag;
-  union {
-    DeleteInternalError_Body delete_internal_error;
-  };
+  ShmDeleteResultStatus status;
+  char *error;
 } ShmDeleteResult;
 
 typedef struct {
@@ -195,26 +196,10 @@ typedef struct {
   ShmKey key;
 } ShmRetrieveRequest;
 
-typedef enum {
-  RetrieveSucceeded,
-  RetrieveDidNotExist,
-  RetrieveInternalError,
-} ShmRetrieveResult_Tag;
-
 typedef struct {
-  const void *_0;
-} RetrieveSucceeded_Body;
-
-typedef struct {
-  char *_0;
-} RetrieveInternalError_Body;
-
-typedef struct {
-  ShmRetrieveResult_Tag tag;
-  union {
-    RetrieveSucceeded_Body retrieve_succeeded;
-    RetrieveInternalError_Body retrieve_internal_error;
-  };
+  ShmRetrieveResultStatus status;
+  const void *address;
+  char *error;
 } ShmRetrieveResult;
 
 typedef unsigned int __uint32_t;

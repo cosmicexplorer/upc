@@ -164,10 +164,8 @@ object FromNative {
           native.address.get.fromNative().get)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
           native.correct_key.fromNative().get)
-        case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => {
-          val msgPtr = native.error.get
-          throw AllocationFailed(msgPtr.getString(0))
-        }
+        case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => throw AllocationFailed(
+          native.error.get.getString(0))
       }
     }
   }
@@ -175,12 +173,12 @@ object FromNative {
   implicit object ShmRetrieveResultFromNative
       extends FromNative[ShmRetrieveResult, LibMemory.ShmRetrieveResult] {
     def fromNative(native: LibMemory.ShmRetrieveResult): Try[ShmRetrieveResult] = Try {
-      native.tag.get match {
-        case LibMemoryEnums.ShmRetrieveResult_Tag.RetrieveSucceeded => RetrieveSucceeded(
-          native.body.retrieve_succeeded._0.get.fromNative().get)
-        case LibMemoryEnums.ShmRetrieveResult_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist
-        case LibMemoryEnums.ShmRetrieveResult_Tag.RetrieveInternalError => throw RetrieveInternalError(
-          native.body.retrieve_internal_error._0.get.getString(0))
+      native.status.get match {
+        case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveSucceeded => RetrieveSucceeded(
+          native.address.get.fromNative().get)
+        case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist
+        case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveInternalError => throw RetrieveInternalError(
+          native.error.get.getString(0))
       }
     }
   }
@@ -188,11 +186,11 @@ object FromNative {
   implicit object ShmDeleteResultFromNative
       extends FromNative[ShmDeleteResult, LibMemory.ShmDeleteResult] {
     def fromNative(native: LibMemory.ShmDeleteResult): Try[ShmDeleteResult] = Try {
-      native.tag.get match {
-        case LibMemoryEnums.ShmDeleteResult_Tag.DeletionSucceeded => DeletionSucceeded
-        case LibMemoryEnums.ShmDeleteResult_Tag.DeleteDidNotExist => throw DeleteDidNotExist
-        case LibMemoryEnums.ShmDeleteResult_Tag.DeleteInternalError => throw DeleteInternalError(
-          native.body.delete_internal_error._0.get.getString(0))
+      native.status.get match {
+        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeletionSucceeded => DeletionSucceeded
+        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeleteDidNotExist => throw DeleteDidNotExist
+        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeleteInternalError => throw DeleteInternalError(
+          native.error.get.getString(0))
       }
     }
   }
