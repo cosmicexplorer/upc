@@ -454,7 +454,7 @@ pub unsafe extern "C" fn shm_delete(request: ShmDeleteRequest) -> ShmDeleteResul
 mod tests {
   use super::*;
 
-  use hashing::Digest;
+  use hashing::{Digest, Fingerprint};
 
   use uuid::Uuid;
 
@@ -472,6 +472,26 @@ mod tests {
         len,
       )
     }
+  }
+
+  #[test]
+  fn shm_get_key_ffi() {
+    let known_source = "asdf".as_bytes();
+    let get_key_request = ShmGetKeyRequest {
+      size: known_source.len() as u64,
+      source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(known_source.as_ptr()) },
+    };
+    let key = unsafe { shm_get_key(get_key_request) };
+    assert_eq!(
+      key,
+      ShmKey {
+        fingerprint: Fingerprint::from_hex_string(
+          "f0e4c2f76c58916ec258f246851bea091d14d4247a2fc3e18694461b1816e13b"
+        )
+        .unwrap(),
+        size_bytes: 4,
+      }
+    );
   }
 
   #[test]
