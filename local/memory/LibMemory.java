@@ -109,6 +109,12 @@ public class LibMemory {
       length = new u_int64_t();
     }
 
+    public ShmKey(jnr.ffi.Runtime runtime) {
+      super(runtime);
+      fingerprint = new Fingerprint();
+      length = new u_int64_t();
+    }
+
     public ShmKey(Fingerprint fingerprintArg, long lengthArg) throws ShmKeyError {
       super(runtime);
       fingerprint = new Fingerprint();

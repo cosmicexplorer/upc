@@ -20,8 +20,5 @@ junit_tests(
     ':libmemory',
     ':memory',
   ],
-  extra_jvm_options=['-Dld.library.path=/Users/dmcclanahan/projects/active/upc/local/directory/target/debug/deps'],
-  extra_env_vars={
-    'LD_LIBRARY_PATH': '/Users/dmcclanahan/projects/active/upc/local/directory/target/debug/deps',
-  },
+  extra_jvm_options=['-Dld.library.path=/Users/dmcclanahan/projects/active/upc/local/target/debug'],
 )
