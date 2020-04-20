@@ -32,15 +32,22 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
     val key = Shm.getKey(key_req).get
     key.length should be (randomSource.length)
 
-    val allocate_req = ShmAllocateRequest(key, mapping)
-    val allocate_result = Shm.allocate(allocate_req).get
-    val shared_mapping = allocate_result match {
-      case AllocationSucceeded(src) => src
-    }
-    shared_mapping.getBytes should be (randomSource)
-
     val retrieve_req = ShmRetrieveRequest(key)
-    val retrieve_result = Shm.retrieve(retrieve_req).get
+    a [RetrieveDidNotExist$] should be thrownBy {
+      Shm.retrieve(retrieve_req).get
+    }
+    val delete_req = ShmDeleteRequest(key)
+    a [DeleteDidNotExist$] should be thrownBy {
+      Shm.delete(delete_req).get
+    }
+
+    // val allocate_req = ShmAllocateRequest(key, mapping)
+    // val allocate_result = Shm.allocate(allocate_req).get
+    // val shared_mapping = allocate_result match {
+    //   case AllocationSucceeded(src) => src
+    // }
+    // shared_mapping.getBytes should be (randomSource)
+
     // retrieve_result should be a [Success]
   }
 }

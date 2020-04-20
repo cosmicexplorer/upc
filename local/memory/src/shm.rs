@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 
 use std::collections::HashMap;
 use std::convert::{From, Into};
+use std::default::Default;
 use std::ffi::CStr;
 use std::io;
 use std::mem;
@@ -43,6 +44,11 @@ impl From<String> for ShmError {
 pub struct ShmKey {
   pub size_bytes: SizeType,
   pub fingerprint: Fingerprint,
+}
+impl Default for ShmKey {
+  fn default() -> Self {
+    ShmKey::from(hashing::EMPTY_DIGEST)
+  }
 }
 
 impl From<ShmKey> for key_t {
@@ -124,21 +130,29 @@ impl ShmRetrieveResult {
     ShmRetrieveResult {
       status: ShmRetrieveResultStatus::RetrieveSucceeded,
       address,
-      error: ptr::null_mut(),
+      ..Default::default()
     }
   }
   pub fn did_not_exist() -> Self {
     ShmRetrieveResult {
       status: ShmRetrieveResultStatus::RetrieveDidNotExist,
-      address: ptr::null(),
-      error: ptr::null_mut(),
+      ..Default::default()
     }
   }
   pub fn errored(error: *mut os::raw::c_char) -> Self {
     ShmRetrieveResult {
       status: ShmRetrieveResultStatus::RetrieveInternalError,
-      address: ptr::null(),
       error,
+      ..Default::default()
+    }
+  }
+}
+impl Default for ShmRetrieveResult {
+  fn default() -> Self {
+    ShmRetrieveResult {
+      status: ShmRetrieveResultStatus::RetrieveInternalError,
+      address: ptr::null(),
+      error: ptr::null_mut(),
     }
   }
 }
@@ -180,32 +194,35 @@ pub struct ShmAllocateResult {
   pub error: *mut os::raw::c_char,
 }
 impl ShmAllocateResult {
-  fn empty_key() -> ShmKey {
-    ShmKey::from(hashing::EMPTY_DIGEST)
-  }
-
   pub fn successful(address: *const os::raw::c_void) -> Self {
     assert!(!address.is_null());
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationSucceeded,
-      correct_key: Self::empty_key(),
       address,
-      error: ptr::null_mut(),
+      ..Default::default()
     }
   }
   pub fn failing(error: *mut os::raw::c_char) -> Self {
     assert!(!error.is_null());
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationFailed,
-      correct_key: Self::empty_key(),
-      address: ptr::null(),
       error,
+      ..Default::default()
     }
   }
   pub fn mismatched_digest(correct_key: ShmKey) -> Self {
     ShmAllocateResult {
       status: ShmAllocateResultStatus::DigestDidNotMatch,
       correct_key,
+      ..Default::default()
+    }
+  }
+}
+impl Default for ShmAllocateResult {
+  fn default() -> Self {
+    ShmAllocateResult {
+      status: ShmAllocateResultStatus::AllocationFailed,
+      correct_key: ShmKey::default(),
       address: ptr::null(),
       error: ptr::null_mut(),
     }
@@ -246,13 +263,13 @@ impl ShmDeleteResult {
   pub fn successful() -> Self {
     ShmDeleteResult {
       status: ShmDeleteResultStatus::DeletionSucceeded,
-      error: ptr::null_mut(),
+      ..Default::default()
     }
   }
   pub fn did_not_exist() -> Self {
     ShmDeleteResult {
       status: ShmDeleteResultStatus::DeleteDidNotExist,
-      error: ptr::null_mut(),
+      ..Default::default()
     }
   }
   pub fn internal_error(error: *mut os::raw::c_char) -> Self {
@@ -260,6 +277,14 @@ impl ShmDeleteResult {
     ShmDeleteResult {
       status: ShmDeleteResultStatus::DeleteInternalError,
       error,
+    }
+  }
+}
+impl Default for ShmDeleteResult {
+  fn default() -> Self {
+    ShmDeleteResult {
+      status: ShmDeleteResultStatus::DeleteInternalError,
+      error: ptr::null_mut(),
     }
   }
 }
@@ -589,6 +614,7 @@ mod tests {
 
   use std::mem;
   use std::os;
+  use std::slice;
 
   fn bytes_to_address(bytes: &[u8]) -> *const os::raw::c_void {
     unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) }
@@ -610,9 +636,10 @@ mod tests {
       size: known_source.len() as SizeType,
       source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(known_source.as_ptr()) },
     };
-    let key = unsafe { shm_get_key(&get_key_request) };
+    let mut key = ShmKey::default();
+    unsafe { shm_get_key(&get_key_request, &mut key) };
     assert_eq!(
-      unsafe { *key },
+      key,
       ShmKey {
         fingerprint: Fingerprint::from_hex_string(
           "f0e4c2f76c58916ec258f246851bea091d14d4247a2fc3e18694461b1816e13b"
@@ -648,8 +675,16 @@ mod tests {
       source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(source_bytes.as_ptr()) },
     };
 
-    match unsafe { *shm_allocate(&bad_allocate_request) } {
-      ShmAllocateResult::DigestDidNotMatch(correct_key) => {
+    let mut result = ShmAllocateResult::default();
+    unsafe { shm_allocate(&bad_allocate_request, &mut result) }
+
+    let ShmAllocateResult {
+      status,
+      correct_key,
+      ..
+    } = result;
+    match (status, correct_key) {
+      (ShmAllocateResultStatus::DigestDidNotMatch, correct_key) => {
         assert_eq!(correct_key, good_key);
       }
       _ => unreachable!(),
@@ -665,10 +700,12 @@ mod tests {
     let key: ShmKey = digest.into();
 
     let retrieve_request = ShmRetrieveRequest { key };
+    let mut retrieve_result = ShmRetrieveResult::default();
 
+    unsafe { shm_retrieve(&retrieve_request, &mut retrieve_result) }
     assert_eq!(
-      unsafe { *shm_retrieve(&retrieve_request) },
-      ShmRetrieveResult::RetrieveDidNotExist
+      retrieve_result.status,
+      ShmRetrieveResultStatus::RetrieveDidNotExist
     );
 
     let source_ptr = bytes_to_address(source_bytes);
@@ -677,8 +714,13 @@ mod tests {
       source: source_ptr,
     };
 
-    let shared_memory_address = match unsafe { *shm_allocate(&allocate_request) } {
-      ShmAllocateResult::AllocationSucceeded(x) => x,
+    let mut allocate_result = ShmAllocateResult::default();
+    unsafe { shm_allocate(&allocate_request, &mut allocate_result) }
+    let ShmAllocateResult {
+      status, address, ..
+    } = allocate_result;
+    let shared_memory_address = match (status, address) {
+      (ShmAllocateResultStatus::AllocationSucceeded, x) => x,
       x => unreachable!("did not expect allocation result {:?}", x),
     };
     /* Assert that we have been given a new address, pointing to the shared memory segment. */
@@ -689,8 +731,13 @@ mod tests {
       read_bytes_from_address(shared_memory_address, source_bytes.len())
     );
 
-    let shared_memory_address_from_retrieve = match unsafe { *shm_retrieve(&retrieve_request) } {
-      ShmRetrieveResult::RetrieveSucceeded(x) => x,
+    let mut retrieve_result = ShmRetrieveResult::default();
+    unsafe { shm_retrieve(&retrieve_request, &mut retrieve_result) }
+    let ShmRetrieveResult {
+      status, address, ..
+    } = retrieve_result;
+    let shared_memory_address_from_retrieve = match (status, address) {
+      (ShmRetrieveResultStatus::RetrieveSucceeded, x) => x,
       x => unreachable!("did not expect retrieval result {:?}", x),
     };
     /* Assert that the address we retrieve is the same one we allocated. */
@@ -698,20 +745,25 @@ mod tests {
 
     /* Delete the allocation. */
     let delete_request = ShmDeleteRequest { key };
+    let mut delete_result = ShmDeleteResult::default();
+    unsafe { shm_delete(&delete_request, &mut delete_result) }
     assert_eq!(
-      unsafe { *shm_delete(&delete_request) },
-      ShmDeleteResult::DeletionSucceeded,
+      delete_result.status,
+      ShmDeleteResultStatus::DeletionSucceeded,
     );
     /* Assert that it cannot be deleted again. */
+    unsafe { shm_delete(&delete_request, &mut delete_result) }
     assert_eq!(
-      unsafe { *shm_delete(&delete_request) },
-      ShmDeleteResult::DeleteDidNotExist,
+      delete_result.status,
+      ShmDeleteResultStatus::DeleteDidNotExist,
     );
 
     /* Assert that the mapping no longer exists when retrieved. */
+    let mut retrieve_result = ShmRetrieveResult::default();
+    unsafe { shm_retrieve(&retrieve_request, &mut retrieve_result) }
     assert_eq!(
-      unsafe { *shm_retrieve(&retrieve_request) },
-      ShmRetrieveResult::RetrieveDidNotExist,
+      retrieve_result.status,
+      ShmRetrieveResultStatus::RetrieveDidNotExist,
     );
   }
 }
