@@ -246,6 +246,16 @@ mod tests {
     PathComponents::from_path(Path::new(s))
   }
 
+  fn make_file_stats<'a, 'b>(input: &'a [(PathComponents, &'b str)]) -> Vec<FileStat<&'b str>> {
+    input
+      .iter()
+      .map(|(components, file)| FileStat {
+        components: components.clone(),
+        terminal: MerkleTrieTerminalEntry::File(*file),
+      })
+      .collect()
+  }
+
   #[test]
   fn populate_and_extract() -> Result<(), MerkleTrieError> {
     let input: Vec<(PathComponents, &str)> = vec![
@@ -253,13 +263,7 @@ mod tests {
       (path_components("b.txt")?, "this is b.txt!"),
       (path_components("d/e.txt")?, "this is d/e.txt!"),
     ];
-    let file_stats: Vec<FileStat<&str>> = input
-      .iter()
-      .map(|(components, file)| FileStat {
-        components: components.clone(),
-        terminal: MerkleTrieTerminalEntry::File(*file),
-      })
-      .collect();
+    let file_stats = make_file_stats(&input);
 
     let mut trie = MerkleTrie::<&str>::new();
     trie.populate(file_stats)?;
@@ -270,7 +274,29 @@ mod tests {
   }
 
   #[test]
-  fn catches_overlapping_paths() {
-    assert!(false, "TODO");
+  fn catches_overlapping_paths() -> Result<(), MerkleTrieError> {
+    let overlapping_file_paths = vec![
+      (path_components("a.txt")?, "first"),
+      (path_components("a.txt")?, "second"),
+    ];
+    assert!(
+      match MerkleTrie::<&str>::new().populate(make_file_stats(&overlapping_file_paths)) {
+        Err(MerkleTrieError::OverlappingPathStats(_)) => true,
+        _ => false,
+      }
+    );
+
+    let overlapping_file_and_dir_path = vec![
+      (path_components("a.txt")?, "first"),
+      (path_components("a.txt/b.txt")?, "this isn't allowed"),
+    ];
+    assert!(match MerkleTrie::<&str>::new()
+      .populate(make_file_stats(&overlapping_file_and_dir_path))
+    {
+      Err(MerkleTrieError::OverlappingPathStats(_)) => true,
+      _ => false,
+    });
+
+    Ok(())
   }
 }
