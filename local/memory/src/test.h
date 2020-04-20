@@ -284,13 +284,13 @@ typedef struct {
   void *shm_internal;
 } __shmid_ds_new;
 
-ShmAllocateResult shm_allocate(ShmAllocateRequest request);
+ShmAllocateResult *shm_allocate(const ShmAllocateRequest *request);
 
-ShmDeleteResult shm_delete(ShmDeleteRequest request);
+ShmDeleteResult *shm_delete(const ShmDeleteRequest *request);
 
 ShmKey *shm_get_key(const ShmGetKeyRequest *request);
 
-ShmRetrieveResult shm_retrieve(ShmRetrieveRequest request);
+ShmRetrieveResult *shm_retrieve(const ShmRetrieveRequest *request);
 
 extern void *shmat(int arg1, const void *arg2, int arg3);
 

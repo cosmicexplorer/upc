@@ -18,7 +18,6 @@ use std::slice;
 use std::str;
 use std::sync::Arc;
 
-
 type SizeType = u32;
 
 lazy_static! {
@@ -417,48 +416,56 @@ impl ShmGetKeyRequest {
 /*   key */
 /* } */
 
+fn leak<T>(x: T) -> *mut T {
+  Box::into_raw(Box::new(x)) as *mut T
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn shm_get_key(request: &ShmGetKeyRequest) -> *mut ShmKey {
   let input_bytes = request.as_slice();
   let digest = Digest::of_bytes(input_bytes);
   let key: ShmKey = digest.into();
-  Box::into_raw(Box::new(key)) as *mut ShmKey
+  leak(key)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_retrieve(request: ShmRetrieveRequest) -> ShmRetrieveResult {
-  match ShmHandle::new(request.into()) {
+pub unsafe extern "C" fn shm_retrieve(request: &ShmRetrieveRequest) -> *mut ShmRetrieveResult {
+  let result = match ShmHandle::new((*request).into()) {
     Ok(shm_handle) => ShmRetrieveResult::RetrieveSucceeded(shm_handle.get_base_address()),
     Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::RetrieveDidNotExist,
     Err(e) => {
       let error_message = CCharErrorMessage::new(format!("{:?}", e));
       ShmRetrieveResult::RetrieveInternalError(error_message.leak_null_terminated_c_string())
     }
-  }
+  };
+  leak(result)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_allocate(request: ShmAllocateRequest) -> ShmAllocateResult {
-  match ShmHandle::new(request.into()) {
+pub unsafe extern "C" fn shm_allocate(request: &ShmAllocateRequest) -> *mut ShmAllocateResult {
+  let result = match ShmHandle::new((*request).into()) {
     Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()),
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::DigestDidNotMatch(shm_key),
     Err(e) => {
       let error_message = CCharErrorMessage::new(format!("{:?}", e));
       ShmAllocateResult::AllocationFailed(error_message.leak_null_terminated_c_string())
     }
-  }
+  };
+  leak(result)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn shm_delete(request: ShmDeleteRequest) -> ShmDeleteResult {
-  match ShmHandle::new(request.into()).and_then(|mut handle| handle.destroy_mapping()) {
-    Ok(()) => ShmDeleteResult::DeletionSucceeded,
-    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
-    Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmDeleteResult::DeleteInternalError(error_message.leak_null_terminated_c_string())
-    }
-  }
+pub unsafe extern "C" fn shm_delete(request: &ShmDeleteRequest) -> *mut ShmDeleteResult {
+  let result =
+    match ShmHandle::new((*request).into()).and_then(|mut handle| handle.destroy_mapping()) {
+      Ok(()) => ShmDeleteResult::DeletionSucceeded,
+      Err(ShmError::MappingDidNotExist) => ShmDeleteResult::DeleteDidNotExist,
+      Err(e) => {
+        let error_message = CCharErrorMessage::new(format!("{:?}", e));
+        ShmDeleteResult::DeleteInternalError(error_message.leak_null_terminated_c_string())
+      }
+    };
+  leak(result)
 }
 
 #[cfg(test)]
@@ -489,12 +496,12 @@ mod tests {
   fn shm_get_key_ffi() {
     let known_source = "asdf".as_bytes();
     let get_key_request = ShmGetKeyRequest {
-      size: known_source.len() as u64,
+      size: known_source.len() as SizeType,
       source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(known_source.as_ptr()) },
     };
     let key = unsafe { shm_get_key(&get_key_request) };
     assert_eq!(
-      key,
+      unsafe { *key },
       ShmKey {
         fingerprint: Fingerprint::from_hex_string(
           "f0e4c2f76c58916ec258f246851bea091d14d4247a2fc3e18694461b1816e13b"
@@ -530,7 +537,7 @@ mod tests {
       source: unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(source_bytes.as_ptr()) },
     };
 
-    match unsafe { shm_allocate(bad_allocate_request) } {
+    match unsafe { *shm_allocate(&bad_allocate_request) } {
       ShmAllocateResult::DigestDidNotMatch(correct_key) => {
         assert_eq!(correct_key, good_key);
       }
@@ -549,7 +556,7 @@ mod tests {
     let retrieve_request = ShmRetrieveRequest { key };
 
     assert_eq!(
-      unsafe { shm_retrieve(retrieve_request) },
+      unsafe { *shm_retrieve(&retrieve_request) },
       ShmRetrieveResult::RetrieveDidNotExist
     );
 
@@ -559,7 +566,7 @@ mod tests {
       source: source_ptr,
     };
 
-    let shared_memory_address = match unsafe { shm_allocate(allocate_request) } {
+    let shared_memory_address = match unsafe { *shm_allocate(&allocate_request) } {
       ShmAllocateResult::AllocationSucceeded(x) => x,
       x => unreachable!("did not expect allocation result {:?}", x),
     };
@@ -571,7 +578,7 @@ mod tests {
       read_bytes_from_address(shared_memory_address, source_bytes.len())
     );
 
-    let shared_memory_address_from_retrieve = match unsafe { shm_retrieve(retrieve_request) } {
+    let shared_memory_address_from_retrieve = match unsafe { *shm_retrieve(&retrieve_request) } {
       ShmRetrieveResult::RetrieveSucceeded(x) => x,
       x => unreachable!("did not expect retrieval result {:?}", x),
     };
@@ -581,18 +588,18 @@ mod tests {
     /* Delete the allocation. */
     let delete_request = ShmDeleteRequest { key };
     assert_eq!(
-      unsafe { shm_delete(delete_request) },
+      unsafe { *shm_delete(&delete_request) },
       ShmDeleteResult::DeletionSucceeded,
     );
     /* Assert that it cannot be deleted again. */
     assert_eq!(
-      unsafe { shm_delete(delete_request) },
+      unsafe { *shm_delete(&delete_request) },
       ShmDeleteResult::DeleteDidNotExist,
     );
 
     /* Assert that the mapping no longer exists when retrieved. */
     assert_eq!(
-      unsafe { shm_retrieve(retrieve_request) },
+      unsafe { *shm_retrieve(&retrieve_request) },
       ShmRetrieveResult::RetrieveDidNotExist,
     );
   }
