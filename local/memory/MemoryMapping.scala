@@ -60,6 +60,14 @@ case class ShmKey(fingerprint: Array[Byte], length: Long) {
 
   lazy val fingerprintHex: String = DatatypeConverter.printHexBinary(fingerprint).toLowerCase
 
+  override def equals(other: Any): Boolean = {
+    Option(other.asInstanceOf[ShmKey]) match {
+      case None => false
+      case Some(ShmKey(fp, len)) => fingerprint.zip(fp).map { case (fp1, fp2) => fp1 == fp2 }
+          .fold(true) { case (acc, cur) => acc && cur }
+    }
+  }
+
   override def toString: String = {
     s"ShmKey(length=$length, fingerprint=$fingerprintHex)"
   }
