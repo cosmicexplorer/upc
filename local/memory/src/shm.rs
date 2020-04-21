@@ -143,8 +143,9 @@ impl ShmRetrieveResult {
       ..Default::default()
     }
   }
-  pub fn errored(error_message: *mut os::raw::c_char) -> Self {
+  pub fn errored(error_message: *mut os::raw::c_char, key: ShmKey) -> Self {
     ShmRetrieveResult {
+      key,
       status: ShmRetrieveResultStatus::RetrieveInternalError,
       error_message,
       ..Default::default()
@@ -208,9 +209,10 @@ impl ShmAllocateResult {
       ..Default::default()
     }
   }
-  pub fn failing(error_message: *mut os::raw::c_char) -> Self {
+  pub fn failing(error_message: *mut os::raw::c_char, key: ShmKey) -> Self {
     assert!(!error_message.is_null());
     ShmAllocateResult {
+      key,
       status: ShmAllocateResultStatus::AllocationFailed,
       error_message,
       ..Default::default()
@@ -262,35 +264,40 @@ pub enum ShmDeleteResultStatus {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ShmDeleteResult {
+  pub key: ShmKey,
+  pub error_message: *mut os::raw::c_char,
   pub status: ShmDeleteResultStatus,
-  pub error: *mut os::raw::c_char,
 }
 impl ShmDeleteResult {
-  pub fn successful() -> Self {
+  pub fn successful(key: ShmKey) -> Self {
     ShmDeleteResult {
+      key,
       status: ShmDeleteResultStatus::DeletionSucceeded,
       ..Default::default()
     }
   }
-  pub fn did_not_exist() -> Self {
+  pub fn did_not_exist(key: ShmKey) -> Self {
     ShmDeleteResult {
+      key,
       status: ShmDeleteResultStatus::DeleteDidNotExist,
       ..Default::default()
     }
   }
-  pub fn internal_error(error: *mut os::raw::c_char) -> Self {
-    assert!(!error.is_null());
+  pub fn internal_error(error_message: *mut os::raw::c_char, key: ShmKey) -> Self {
+    assert!(!error_message.is_null());
     ShmDeleteResult {
+      key,
       status: ShmDeleteResultStatus::DeleteInternalError,
-      error,
+      error_message,
     }
   }
 }
 impl Default for ShmDeleteResult {
   fn default() -> Self {
     ShmDeleteResult {
+      key: ShmKey::default(),
       status: ShmDeleteResultStatus::DeleteInternalError,
-      error: ptr::null_mut(),
+      error_message: ptr::null_mut(),
     }
   }
 }
@@ -589,14 +596,13 @@ pub unsafe extern "C" fn shm_retrieve(
   request: *const ShmRetrieveRequest,
   result: *mut ShmRetrieveResult,
 ) {
+  let key = (*request).key;
   *result = match ShmHandle::new((*request).into()) {
-    Ok(shm_handle) => {
-      ShmRetrieveResult::successful(shm_handle.get_base_address(), shm_handle.get_key())
-    }
-    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist((*request).key),
+    Ok(shm_handle) => ShmRetrieveResult::successful(shm_handle.get_base_address(), key),
+    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist(key),
     Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmRetrieveResult::errored(error_message.leak_null_terminated_c_string())
+      let error_message = CString::new(format!("{:?}", e)).unwrap();
+      ShmRetrieveResult::errored(error_message.into_raw(), key)
     }
   };
 }
@@ -606,6 +612,8 @@ pub unsafe extern "C" fn shm_allocate(
   request: *const ShmAllocateRequest,
   result: *mut ShmAllocateResult,
 ) {
+  let key = (*request).key;
+
   std::fs::write(
     "/Users/dmcclanahan/projects/active/upc/request.txt",
     &format!("+{:?}", request),
@@ -619,9 +627,7 @@ pub unsafe extern "C" fn shm_allocate(
   .unwrap();
 
   *result = match ShmHandle::new(shm_request) {
-    Ok(shm_handle) => {
-      ShmAllocateResult::successful(shm_handle.get_base_address(), shm_handle.get_key())
-    }
+    Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address(), key),
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
     Err(e) => {
       let error: String = format!("{:?}", e);
@@ -631,7 +637,7 @@ pub unsafe extern "C" fn shm_allocate(
       )
       .unwrap();
       let error_message = CString::new(error).unwrap();
-      ShmAllocateResult::failing(error_message.into_raw())
+      ShmAllocateResult::failing(error_message.into_raw(), key)
     }
   };
 }
@@ -641,13 +647,14 @@ pub unsafe extern "C" fn shm_delete(
   request: *const ShmDeleteRequest,
   result: *mut ShmDeleteResult,
 ) {
+  let key = (*request).key;
   *result = match ShmHandle::new((*request).into()).and_then(|mut handle| handle.destroy_mapping())
   {
-    Ok(()) => ShmDeleteResult::successful(),
-    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::did_not_exist(),
+    Ok(()) => ShmDeleteResult::successful(key),
+    Err(ShmError::MappingDidNotExist) => ShmDeleteResult::did_not_exist(key),
     Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ShmDeleteResult::internal_error(error_message.leak_null_terminated_c_string())
+      let error_message = CString::new(format!("{:?}", e)).unwrap();
+      ShmDeleteResult::internal_error(error_message.into_raw(), key)
     }
   };
 }

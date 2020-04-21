@@ -68,6 +68,20 @@ object LibMemory {
   case class ShmKeyError(message: String, cause: Throwable = null)
       extends FFIError(message, cause)
 
+  class SharedMemAddressOrErrorMessage(runtime: Runtime = runtime) extends ShmKey(runtime) {
+    val address = new Pointer
+    val error_message = new Pointer
+
+    lazy val getAddressPointer: jnr.ffi.Pointer = {
+      val n = getSize.toInt
+      val ptr = Memory.allocateDirect(runtime, n)
+      val intermediateArray: Array[Byte] = new Array(n)
+      address.get.get(0, intermediateArray, 0, n)
+      ptr.put(0, intermediateArray, 0, n)
+      ptr
+    }
+  }
+
   // [Request] for shm_get_key()
   class ShmGetKeyRequest(runtime: Runtime = runtime) extends Struct(runtime) {
     val size = new Unsigned64
@@ -95,19 +109,9 @@ object LibMemory {
     }
   }
   // [Result] for shm_allocate()
-  class ShmAllocateResult(runtime: Runtime = runtime) extends ShmKey(runtime) {
-    val address = new Pointer
-    val error_message = new Pointer
+  class ShmAllocateResult(runtime: Runtime = runtime)
+      extends SharedMemAddressOrErrorMessage(runtime) {
     val status: Enum8[ShmAllocateResultStatus_Tag] = new Enum8(classOf[ShmAllocateResultStatus_Tag])
-
-    lazy val getAddressPointer: jnr.ffi.Pointer = {
-      val n = getSize.toInt
-      val ptr = Memory.allocateDirect(runtime, n)
-      val intermediateArray: Array[Byte] = new Array(n)
-      address.get.get(0, intermediateArray, 0, n)
-      ptr.put(0, intermediateArray, 0, n)
-      ptr
-    }
   }
 
   // [Request] for shm_retrieve()
@@ -120,26 +124,23 @@ object LibMemory {
     }
   }
   // [Result] for shm_retrieve()
-  class ShmRetrieveResult(runtime: Runtime = runtime) extends ShmKey(runtime) {
-    val address = new Pointer
-    val error_message = new Pointer
-    val status: Enum[ShmRetrieveResultStatus_Tag] = new Enum(classOf[ShmRetrieveResultStatus_Tag])
+  class ShmRetrieveResult(runtime: Runtime = runtime)
+      extends SharedMemAddressOrErrorMessage(runtime) {
+    val status: Enum8[ShmRetrieveResultStatus_Tag] = new Enum8(classOf[ShmRetrieveResultStatus_Tag])
   }
 
   // [Request] for shm_delete()
-  class ShmDeleteRequest(runtime: Runtime = runtime) extends Struct(runtime) {
-    val key = new ShmKey
-  }
+  class ShmDeleteRequest(runtime: Runtime = runtime) extends ShmKey(runtime)
   object ShmDeleteRequest {
     def apply(key: ShmKey): ShmDeleteRequest = {
       val ret = new ShmDeleteRequest
-      ret.key.copyKeyFrom(key)
+      ret.copyKeyFrom(key)
       ret
     }
   }
   // [Result] for shm_delete()
-  class ShmDeleteResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val status: Enum[ShmDeleteResultStatus_Tag] = new Enum(classOf[ShmDeleteResultStatus_Tag])
+  class ShmDeleteResult(runtime: Runtime = runtime) extends ShmKey(runtime) {
     val error = new Pointer
+    val status: Enum8[ShmDeleteResultStatus_Tag] = new Enum8(classOf[ShmDeleteResultStatus_Tag])
   }
 }

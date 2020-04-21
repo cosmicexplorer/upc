@@ -29,23 +29,41 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
     key.length should be (randomSource.length)
 
     val retrieve_req = ShmRetrieveRequest(key)
-    a [RetrieveDidNotExist$] should be thrownBy {
+    a [RetrieveDidNotExist] should be thrownBy {
       Shm.retrieve(retrieve_req).get
     }
     val delete_req = ShmDeleteRequest(key)
-    a [DeleteDidNotExist$] should be thrownBy {
+    a [DeleteDidNotExist] should be thrownBy {
       Shm.delete(delete_req).get
     }
 
     val allocate_req = ShmAllocateRequest(key, mapping)
     val allocate_result = Shm.allocate(allocate_req).get
-    val shared_mapping = allocate_result match {
-      case AllocationSucceeded(src) => src
+    val (allocated_key, shared_mapping) = allocate_result match {
+      case AllocationSucceeded(key, src) => (key, src)
     }
+    allocated_key should === (key)
     shared_mapping.getBytes should be (randomSource)
 
-    // val retro
+    val retrieve_result = Shm.retrieve(retrieve_req).get
+    val (retrieved_key, retrieved_mapping) = retrieve_result match {
+      case RetrieveSucceeded(key, src) => (key, src)
+    }
+    retrieved_key should === (key)
+    retrieved_mapping.getBytes should be (randomSource)
 
-    // retrieve_result should be a [Success]
+    val delete_result = Shm.delete(delete_req).get
+    val deleted_key = delete_result match {
+      case DeletionSucceeded(key) => key
+    }
+    deleted_key should === (key)
+
+    // Attempting to delete and/or retrieve again after deletion is performed should raise an error.
+    a [RetrieveDidNotExist] should be thrownBy {
+      Shm.retrieve(retrieve_req).get
+    }
+    a [DeleteDidNotExist] should be thrownBy {
+      Shm.delete(delete_req).get
+    }
   }
 }

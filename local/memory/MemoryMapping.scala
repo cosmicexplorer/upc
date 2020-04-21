@@ -10,10 +10,13 @@ import scala.util.Try
 
 
 sealed abstract class ShmError(message: String) extends Exception(message)
+
 case class ShmNativeObjectEncodingError(message: String) extends ShmError(message)
+
 class ShmAllocationError(message: String) extends ShmError(message)
 class ShmRetrieveError(message: String) extends ShmError(message)
 class ShmDeleteError(message: String) extends ShmError(message)
+
 case class MemoryMappingReadError(message: String) extends ShmError(message)
 
 
@@ -65,24 +68,29 @@ case class ShmKey(fingerprint: Array[Byte], length: Long) {
 case class ShmGetKeyRequest(source: MemoryMapping)
 
 case class ShmAllocateRequest(key: ShmKey, source: MemoryMapping)
+
 sealed abstract class ShmAllocateResult
-case class AllocationSucceeded(source: MemoryMapping) extends ShmAllocateResult
+case class AllocationSucceeded(key: ShmKey, source: MemoryMapping) extends ShmAllocateResult
 case class DigestDidNotMatch(key: ShmKey) extends ShmAllocationError(
   s"digest did not match: correct key was $key")
-case class AllocationFailed(error: String) extends ShmAllocationError(
-  s"allocation failed: $error")
+case class AllocationFailed(key: ShmKey, error: String) extends ShmAllocationError(
+  s"allocation failed for key $key: $error")
 
 case class ShmRetrieveRequest(key: ShmKey)
 sealed abstract class ShmRetrieveResult
-case class RetrieveSucceeded(source: MemoryMapping) extends ShmRetrieveResult
-case object RetrieveDidNotExist extends ShmRetrieveError("entry to retrieve did not exist")
-case class RetrieveInternalError(error: String) extends ShmRetrieveError(s"retrieve failed: $error")
+case class RetrieveSucceeded(key: ShmKey, source: MemoryMapping) extends ShmRetrieveResult
+case class RetrieveDidNotExist(key: ShmKey)
+    extends ShmRetrieveError(s"entry for key $key did not exist!!")
+case class RetrieveInternalError(key: ShmKey, error: String)
+    extends ShmRetrieveError(s"retrieval of key $key failed: $error")
 
 case class ShmDeleteRequest(key: ShmKey)
 sealed abstract class ShmDeleteResult
-case object DeletionSucceeded extends ShmDeleteResult
-case object DeleteDidNotExist extends ShmDeleteError("entry to delete did noot exist")
-case class DeleteInternalError(error: String) extends ShmDeleteError(s"deletion failed: $error")
+case class DeletionSucceeded(key: ShmKey) extends ShmDeleteResult
+case class DeleteDidNotExist(key: ShmKey)
+    extends ShmDeleteError(s"entry to delete for key $key did not exist!")
+case class DeleteInternalError(key: ShmKey, error: String)
+    extends ShmDeleteError(s"deletion of key $key failed: $error")
 
 
 trait IntoNative[JvmT, NativeT] {
@@ -163,12 +171,14 @@ object FromNative {
   implicit object ShmAllocateResultFromNative
       extends FromNative[ShmAllocateResult, LibMemory.ShmAllocateResult] {
     def fromNative(native: LibMemory.ShmAllocateResult): Try[ShmAllocateResult] = Try {
+      val key = ShmKeyFromNative.fromNative(native).get
       native.status.get match {
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationSucceeded => AllocationSucceeded(
+          key,
           native.getAddressPointer.fromNative().get)
-        case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
-          ShmKeyFromNative.fromNative(native).get)
+        case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(key)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => throw AllocationFailed(
+          key,
           native.error_message.get.getString(0))
       }
     }
@@ -177,11 +187,14 @@ object FromNative {
   implicit object ShmRetrieveResultFromNative
       extends FromNative[ShmRetrieveResult, LibMemory.ShmRetrieveResult] {
     def fromNative(native: LibMemory.ShmRetrieveResult): Try[ShmRetrieveResult] = Try {
+      val key = ShmKeyFromNative.fromNative(native).get
       native.status.get match {
         case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveSucceeded => RetrieveSucceeded(
-          native.address.get.fromNative().get)
-        case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist
+          key,
+          native.getAddressPointer.fromNative().get)
+        case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist(key)
         case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveInternalError => throw RetrieveInternalError(
+          key,
           native.error_message.get.getString(0))
       }
     }
@@ -190,10 +203,12 @@ object FromNative {
   implicit object ShmDeleteResultFromNative
       extends FromNative[ShmDeleteResult, LibMemory.ShmDeleteResult] {
     def fromNative(native: LibMemory.ShmDeleteResult): Try[ShmDeleteResult] = Try {
+      val key = ShmKeyFromNative.fromNative(native).get
       native.status.get match {
-        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeletionSucceeded => DeletionSucceeded
-        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeleteDidNotExist => throw DeleteDidNotExist
+        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeletionSucceeded => DeletionSucceeded(key)
+        case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeleteDidNotExist => throw DeleteDidNotExist(key)
         case LibMemoryEnums.ShmDeleteResultStatus_Tag.DeleteInternalError => throw DeleteInternalError(
+          key,
           native.error.get.getString(0))
       }
     }

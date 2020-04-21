@@ -183,8 +183,9 @@ typedef struct {
 } ShmDeleteRequest;
 
 typedef struct {
+  ShmKey key;
+  char *error_message;
   ShmDeleteResultStatus status;
-  char *error;
 } ShmDeleteResult;
 
 typedef struct {
