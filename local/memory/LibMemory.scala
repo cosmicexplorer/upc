@@ -17,13 +17,13 @@ object LibMemory {
   abstract class FFIError(message: String, cause: Throwable = null)
       extends RuntimeException(message, cause)
 
-  lazy val instance: Iface = {
+  implicit lazy val instance: Iface = {
     val lib_path = "/Users/dmcclanahan/projects/active/upc/local/target/debug"
     val loader = LibraryLoader.create(classOf[Iface])
     lib_path.split(":").foreach(loader.search(_))
     loader.load("memory")
   }
-  lazy val runtime = Runtime.getRuntime(instance)
+  implicit lazy val runtime = Runtime.getRuntime(instance)
 
   private[upc] def intoDirectPointer(bytes: Array[Byte]): Pointer = {
     val ptr = Memory.allocateDirect(runtime, bytes.length)
@@ -44,7 +44,7 @@ object LibMemory {
 
     def getSize: Long = size_bytes.get
 
-    def getFingerprintBytes: Array[Byte] = fingerprint.map(u8 => u8.get.toByte)
+    lazy val getFingerprintBytes: Array[Byte] = fingerprint.map(u8 => u8.get.toByte)
 
     def copyKeyFrom(other: ShmKey): Unit = {
       size_bytes.set(other.getSize)
@@ -95,18 +95,19 @@ object LibMemory {
     }
   }
   // [Result] for shm_allocate()
-  class ShmAllocateResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    import ShmKey._
+  class ShmAllocateResult(runtime: Runtime = runtime) extends ShmKey(runtime) {
     val address = new Pointer
     val error_message = new Pointer
-    val correct_size_bytes = new Unsigned64
-    val correct_fingerprint = array(new Array[Unsigned8](FINGERPRINT_LENGTH))
-    val status: Enum[ShmAllocateResultStatus_Tag] = new Enum(classOf[ShmAllocateResultStatus_Tag])
+    val status: Enum8[ShmAllocateResultStatus_Tag] = new Enum8(classOf[ShmAllocateResultStatus_Tag])
 
-    lazy val getCorrectSize: Long = correct_size_bytes.get
-    lazy val getCorrectFingerprintBytes: Array[Byte] = correct_fingerprint.map(u8 => u8.get.toByte)
-
-    lazy val correctKey: ShmKey = ShmKey(getCorrectSize, getCorrectFingerprintBytes)
+    lazy val getAddressPointer: jnr.ffi.Pointer = {
+      val n = getSize.toInt
+      val ptr = Memory.allocateDirect(runtime, n)
+      val intermediateArray: Array[Byte] = new Array(n)
+      address.get.get(0, intermediateArray, 0, n)
+      ptr.put(0, intermediateArray, 0, n)
+      ptr
+    }
   }
 
   // [Request] for shm_retrieve()
@@ -119,10 +120,10 @@ object LibMemory {
     }
   }
   // [Result] for shm_retrieve()
-  class ShmRetrieveResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val status: Enum[ShmRetrieveResultStatus_Tag] = new Enum(classOf[ShmRetrieveResultStatus_Tag])
+  class ShmRetrieveResult(runtime: Runtime = runtime) extends ShmKey(runtime) {
     val address = new Pointer
-    val error = new Pointer
+    val error_message = new Pointer
+    val status: Enum[ShmRetrieveResultStatus_Tag] = new Enum(classOf[ShmRetrieveResultStatus_Tag])
   }
 
   // [Request] for shm_delete()

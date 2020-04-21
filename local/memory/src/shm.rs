@@ -122,28 +122,31 @@ pub enum ShmRetrieveResultStatus {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ShmRetrieveResult {
-  pub status: ShmRetrieveResultStatus,
+  pub key: ShmKey,
   pub address: *const os::raw::c_void,
-  pub error: *mut os::raw::c_char,
+  pub error_message: *mut os::raw::c_char,
+  pub status: ShmRetrieveResultStatus,
 }
 impl ShmRetrieveResult {
-  pub fn successful(address: *const os::raw::c_void) -> Self {
+  pub fn successful(address: *const os::raw::c_void, key: ShmKey) -> Self {
     ShmRetrieveResult {
+      key,
       status: ShmRetrieveResultStatus::RetrieveSucceeded,
       address,
       ..Default::default()
     }
   }
-  pub fn did_not_exist() -> Self {
+  pub fn did_not_exist(key: ShmKey) -> Self {
     ShmRetrieveResult {
+      key,
       status: ShmRetrieveResultStatus::RetrieveDidNotExist,
       ..Default::default()
     }
   }
-  pub fn errored(error: *mut os::raw::c_char) -> Self {
+  pub fn errored(error_message: *mut os::raw::c_char) -> Self {
     ShmRetrieveResult {
       status: ShmRetrieveResultStatus::RetrieveInternalError,
-      error,
+      error_message,
       ..Default::default()
     }
   }
@@ -151,9 +154,10 @@ impl ShmRetrieveResult {
 impl Default for ShmRetrieveResult {
   fn default() -> Self {
     ShmRetrieveResult {
+      key: ShmKey::default(),
       status: ShmRetrieveResultStatus::RetrieveInternalError,
       address: ptr::null(),
-      error: ptr::null_mut(),
+      error_message: ptr::null_mut(),
     }
   }
 }
@@ -189,17 +193,18 @@ pub enum ShmAllocateResultStatus {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ShmAllocateResult {
+  pub key: ShmKey,
   pub address: *const os::raw::c_void,
   pub error_message: *mut os::raw::c_char,
-  pub correct_key: ShmKey,
   pub status: ShmAllocateResultStatus,
 }
 impl ShmAllocateResult {
-  pub fn successful(address: *const os::raw::c_void) -> Self {
+  pub fn successful(address: *const os::raw::c_void, key: ShmKey) -> Self {
     assert!(!address.is_null());
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationSucceeded,
       address,
+      key,
       ..Default::default()
     }
   }
@@ -211,10 +216,10 @@ impl ShmAllocateResult {
       ..Default::default()
     }
   }
-  pub fn mismatched_digest(correct_key: ShmKey) -> Self {
+  pub fn mismatched_digest(key: ShmKey) -> Self {
     ShmAllocateResult {
       status: ShmAllocateResultStatus::DigestDidNotMatch,
-      correct_key,
+      key,
       ..Default::default()
     }
   }
@@ -223,7 +228,7 @@ impl Default for ShmAllocateResult {
   fn default() -> Self {
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationFailed,
-      correct_key: ShmKey::default(),
+      key: ShmKey::default(),
       address: ptr::null(),
       error_message: ptr::null_mut(),
     }
@@ -585,8 +590,10 @@ pub unsafe extern "C" fn shm_retrieve(
   result: *mut ShmRetrieveResult,
 ) {
   *result = match ShmHandle::new((*request).into()) {
-    Ok(shm_handle) => ShmRetrieveResult::successful(shm_handle.get_base_address()),
-    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist(),
+    Ok(shm_handle) => {
+      ShmRetrieveResult::successful(shm_handle.get_base_address(), shm_handle.get_key())
+    }
+    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist((*request).key),
     Err(e) => {
       let error_message = CCharErrorMessage::new(format!("{:?}", e));
       ShmRetrieveResult::errored(error_message.leak_null_terminated_c_string())
@@ -612,7 +619,9 @@ pub unsafe extern "C" fn shm_allocate(
   .unwrap();
 
   *result = match ShmHandle::new(shm_request) {
-    Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address()),
+    Ok(shm_handle) => {
+      ShmAllocateResult::successful(shm_handle.get_base_address(), shm_handle.get_key())
+    }
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
     Err(e) => {
       let error: String = format!("{:?}", e);
@@ -722,14 +731,10 @@ mod tests {
     let mut result = ShmAllocateResult::default();
     unsafe { shm_allocate(&bad_allocate_request, &mut result) }
 
-    let ShmAllocateResult {
-      status,
-      correct_key,
-      ..
-    } = result;
-    match (status, correct_key) {
-      (ShmAllocateResultStatus::DigestDidNotMatch, correct_key) => {
-        assert_eq!(correct_key, good_key);
+    let ShmAllocateResult { status, key, .. } = result;
+    match (status, key) {
+      (ShmAllocateResultStatus::DigestDidNotMatch, key) => {
+        assert_eq!(key, good_key);
       }
       _ => unreachable!(),
     }

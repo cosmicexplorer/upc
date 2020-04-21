@@ -172,9 +172,9 @@ typedef struct {
 } ShmAllocateRequest;
 
 typedef struct {
+  ShmKey key;
   const void *address;
   char *error_message;
-  ShmKey correct_key;
   ShmAllocateResultStatus status;
 } ShmAllocateResult;
 
@@ -197,9 +197,10 @@ typedef struct {
 } ShmRetrieveRequest;
 
 typedef struct {
-  ShmRetrieveResultStatus status;
+  ShmKey key;
   const void *address;
-  char *error;
+  char *error_message;
+  ShmRetrieveResultStatus status;
 } ShmRetrieveResult;
 
 typedef unsigned int __uint32_t;

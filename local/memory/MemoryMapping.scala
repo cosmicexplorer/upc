@@ -1,5 +1,7 @@
 package upc.local.memory
 
+import upc.local.memory.PointerUtil._
+
 import _root_.jnr.ffi._
 
 import java.nio.charset.Charset
@@ -23,14 +25,7 @@ class MemoryMapping(val pointer: Pointer) {
   def size: Long = pointer.size
 
   lazy val getBytes: Array[Byte] = {
-    val bytes: Array[Byte] = if (pointer.size.toInt == -1) {
-      // new Array(0)
-      throw new RuntimeException(pointer.toString)
-    } else if (pointer.size.toInt < 0) {
-      throw new RuntimeException(s"pointer size: ${pointer.size}, ${pointer.size.toInt}")
-    } else {
-      new Array(pointer.size.toInt)
-    }
+    val bytes: Array[Byte] = new Array(pointer.size.toInt)
     pointer.get(0, bytes, 0, bytes.length)
     bytes
   }
@@ -170,9 +165,9 @@ object FromNative {
     def fromNative(native: LibMemory.ShmAllocateResult): Try[ShmAllocateResult] = Try {
       native.status.get match {
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationSucceeded => AllocationSucceeded(
-          native.address.get.fromNative().get)
+          native.getAddressPointer.fromNative().get)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
-          native.correctKey.fromNative().get)
+          ShmKeyFromNative.fromNative(native).get)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => throw AllocationFailed(
           native.error_message.get.getString(0))
       }
@@ -187,7 +182,7 @@ object FromNative {
           native.address.get.fromNative().get)
         case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveDidNotExist => throw RetrieveDidNotExist
         case LibMemoryEnums.ShmRetrieveResultStatus_Tag.RetrieveInternalError => throw RetrieveInternalError(
-          native.error.get.getString(0))
+          native.error_message.get.getString(0))
       }
     }
   }

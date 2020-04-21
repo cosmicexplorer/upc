@@ -42,7 +42,7 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
     val shared_mapping = allocate_result match {
       case AllocationSucceeded(src) => src
     }
-    // shared_mapping.getBytes should be (randomSource)
+    shared_mapping.getBytes should be (randomSource)
 
     // val retro
 
