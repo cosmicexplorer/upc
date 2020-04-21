@@ -1,8 +1,7 @@
 package upc.local.memory
 
-import _root_.jnr.ffi.Pointer
+import _root_.jnr.ffi._
 
-import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import javax.xml.bind.DatatypeConverter
 import scala.util.Try
@@ -20,12 +19,19 @@ object MemoryMapping {
   def fromArray(buf: Array[Byte]) = new MemoryMapping(LibMemory.intoDirectPointer(buf))
 }
 
-class MemoryMapping(private[upc] val pointer: Pointer) {
+class MemoryMapping(val pointer: Pointer) {
   def size: Long = pointer.size
 
   lazy val getBytes: Array[Byte] = {
-    val bytes: Array[Byte] = new Array(pointer.size.toInt)
-    pointer.get(0, bytes, 0, pointer.size.toInt)
+    val bytes: Array[Byte] = if (pointer.size.toInt == -1) {
+      // new Array(0)
+      throw new RuntimeException(pointer.toString)
+    } else if (pointer.size.toInt < 0) {
+      throw new RuntimeException(s"pointer size: ${pointer.size}, ${pointer.size.toInt}")
+    } else {
+      new Array(pointer.size.toInt)
+    }
+    pointer.get(0, bytes, 0, bytes.length)
     bytes
   }
 
@@ -84,14 +90,14 @@ case object DeleteDidNotExist extends ShmDeleteError("entry to delete did noot e
 case class DeleteInternalError(error: String) extends ShmDeleteError(s"deletion failed: $error")
 
 
-trait IntoNative[JvmType, NativeType] {
-  def intoNative(jvm: JvmType): Try[NativeType]
+trait IntoNative[JvmT, NativeT] {
+  def intoNative(jvm: JvmT): Try[NativeT]
 }
 object IntoNative {
-  implicit class JvmToNativeWrapper[JvmType, NativeType](jvm: JvmType)(
-    implicit ctx: IntoNative[JvmType, NativeType]
+  implicit class JvmToNativeWrapper[JvmT, NativeT](jvm: JvmT)(
+    implicit ctx: IntoNative[JvmT, NativeT]
   ) {
-    def intoNative(): Try[NativeType] = ctx.intoNative(jvm)
+    def intoNative(): Try[NativeT] = ctx.intoNative(jvm)
   }
 
   implicit object ShmKeyIntoNative extends IntoNative[ShmKey, LibMemory.ShmKey] {
@@ -111,11 +117,12 @@ object IntoNative {
 
   implicit object ShmAllocateRequestIntoNative
       extends IntoNative[ShmAllocateRequest, LibMemory.ShmAllocateRequest] {
-    def intoNative(jvm: ShmAllocateRequest): Try[LibMemory.ShmAllocateRequest] = Try(
+    def intoNative(jvm: ShmAllocateRequest): Try[LibMemory.ShmAllocateRequest] = Try {
       LibMemory.ShmAllocateRequest(
         jvm.key.intoNative().get,
         jvm.source.intoNative().get,
-      ))
+      )
+    }
   }
 
   implicit object ShmRetrieveRequestIntoNative
@@ -131,16 +138,18 @@ object IntoNative {
   }
 }
 
-trait FromNative[JvmType, NativeType] {
+trait FromNative[JvmT, NativeT] {
   // This one is a Try[_] because some native return values represent errors, which we convert to
   // exceptions!
-  def fromNative(native: NativeType): Try[JvmType]
+  def fromNative(native: NativeT): Try[JvmT]
 }
 object FromNative {
-  implicit class JvmFromNativeWrapper[JvmType, NativeType](native: NativeType)(
-    implicit ctx: FromNative[JvmType, NativeType]
+  import LibMemory.runtime
+
+  implicit class JvmFromNativeWrapper[JvmT, NativeT](native: NativeT)(
+    implicit ctx: FromNative[JvmT, NativeT]
   ) {
-    def fromNative(): Try[JvmType] = ctx.fromNative(native)
+    def fromNative(): Try[JvmT] = ctx.fromNative(native)
   }
 
   implicit object ShmKeyFromNative
@@ -163,9 +172,9 @@ object FromNative {
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationSucceeded => AllocationSucceeded(
           native.address.get.fromNative().get)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.DigestDidNotMatch => throw DigestDidNotMatch(
-          native.correct_key.fromNative().get)
+          native.correctKey.fromNative().get)
         case LibMemoryEnums.ShmAllocateResultStatus_Tag.AllocationFailed => throw AllocationFailed(
-          native.error.get.getString(0))
+          native.error_message.get.getString(0))
       }
     }
   }
@@ -200,7 +209,7 @@ object Shm {
   import IntoNative._
   import FromNative._
 
-  import LibMemory.instance
+  import LibMemory.{instance, runtime}
 
   def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try {
     val req = request.intoNative().get
@@ -211,8 +220,13 @@ object Shm {
 
   def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try {
     val req = request.intoNative().get
+    val reqPtr = Struct.getMemory(req)
+
     val res = new LibMemory.ShmAllocateResult
-    instance.shm_allocate(req, res)
+    val resPtr = Memory.allocateDirect(runtime, Struct.size(res))
+    res.useMemory(resPtr)
+
+    instance.shm_allocate(reqPtr, resPtr)
     res.fromNative().get
   }
 

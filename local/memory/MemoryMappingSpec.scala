@@ -1,14 +1,10 @@
 package upc.local.memory
 
-import jnr.ffi._
 import org.junit.runner.RunWith
 import org.scalatest._
 import org.scalatest.junit.JUnitRunner
 
-import java.nio.ByteBuffer
 import java.util.UUID
-import javax.xml.bind.DatatypeConverter
-import scala.util.{Try, Success}
 
 @RunWith(classOf[JUnitRunner])
 class MemoryMappingSpec extends FlatSpec with Matchers {
@@ -41,12 +37,14 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
       Shm.delete(delete_req).get
     }
 
-    // val allocate_req = ShmAllocateRequest(key, mapping)
-    // val allocate_result = Shm.allocate(allocate_req).get
-    // val shared_mapping = allocate_result match {
-    //   case AllocationSucceeded(src) => src
-    // }
+    val allocate_req = ShmAllocateRequest(key, mapping)
+    val allocate_result = Shm.allocate(allocate_req).get
+    val shared_mapping = allocate_result match {
+      case AllocationSucceeded(src) => src
+    }
     // shared_mapping.getBytes should be (randomSource)
+
+    // val retro
 
     // retrieve_result should be a [Success]
   }

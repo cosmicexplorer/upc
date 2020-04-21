@@ -1,7 +1,6 @@
 package upc.local.memory
 
 import jnr.ffi._
-import jnr.ffi.types._
 
 
 object LibMemory {
@@ -9,9 +8,10 @@ object LibMemory {
 
   trait Iface {
     def shm_get_key(request: ShmGetKeyRequest, result: ShmKey): Unit
-    def shm_allocate(request: ShmAllocateRequest, result: ShmAllocateResult): Unit
+    def shm_allocate(request: Pointer, result: Pointer): Unit
     def shm_retrieve(request: ShmRetrieveRequest, result: ShmRetrieveResult): Unit
     def shm_delete(request: ShmDeleteRequest, result: ShmDeleteResult): Unit
+    def shm_free_error_message(error_message: Pointer): Unit
   }
 
   abstract class FFIError(message: String, cause: Throwable = null)
@@ -35,18 +35,18 @@ object LibMemory {
   class ShmKey(runtime: Runtime = runtime) extends Struct(runtime) {
     import ShmKey._
 
-    val size_bytes = new Unsigned32
+    val size_bytes = new Unsigned64
     // FIXME: This used to be a separate Fingerprint struct, like in the actual FFI, but it caused
     // errors -- the equivalent of this array kept being zeroed out. Since a struct that has only
     // one element can be replaced precisely with that element in memory, we still have a 1:1
     // mapping.
     val fingerprint = array(new Array[Unsigned8](FINGERPRINT_LENGTH))
 
-    def getSize: Long = size_bytes.longValue
+    def getSize: Long = size_bytes.get
 
     def getFingerprintBytes: Array[Byte] = fingerprint.map(u8 => u8.get.toByte)
 
-    def copyFrom(other: ShmKey): Unit = {
+    def copyKeyFrom(other: ShmKey): Unit = {
       size_bytes.set(other.getSize)
       fingerprint.zip(other.fingerprint).foreach { case (dst, src) =>
         dst.set(src.get)
@@ -70,7 +70,7 @@ object LibMemory {
 
   // [Request] for shm_get_key()
   class ShmGetKeyRequest(runtime: Runtime = runtime) extends Struct(runtime) {
-    val size = new Unsigned32
+    val size = new Unsigned64
     val source = new Pointer
   }
   object ShmGetKeyRequest {
@@ -83,36 +83,38 @@ object LibMemory {
   }
 
   // [Request] for shm_allocate()
-  class ShmAllocateRequest(runtime: Runtime = runtime) extends Struct(runtime) {
-    val key = new ShmKey
+  class ShmAllocateRequest(runtime: Runtime = runtime) extends ShmKey(runtime) {
     val source = new Pointer
   }
   object ShmAllocateRequest {
     def apply(key: ShmKey, source: Pointer): ShmAllocateRequest = {
       val ret = new ShmAllocateRequest
-      ret.key.copyFrom(key)
+      ret.copyKeyFrom(key)
       ret.source.set(source)
       ret
     }
   }
   // [Result] for shm_allocate()
   class ShmAllocateResult(runtime: Runtime = runtime) extends Struct(runtime) {
-    val status: Enum[ShmAllocateResultStatus_Tag] = new Enum(classOf[ShmAllocateResultStatus_Tag])
-    val correct_key = new ShmKey
-    // Note: this is an anonymous union in test.h, so the `body` identifier does not exist!
-    // val body = new ShmAllocateResult_Body
+    import ShmKey._
     val address = new Pointer
-    val error = new Pointer
+    val error_message = new Pointer
+    val correct_size_bytes = new Unsigned64
+    val correct_fingerprint = array(new Array[Unsigned8](FINGERPRINT_LENGTH))
+    val status: Enum[ShmAllocateResultStatus_Tag] = new Enum(classOf[ShmAllocateResultStatus_Tag])
+
+    lazy val getCorrectSize: Long = correct_size_bytes.get
+    lazy val getCorrectFingerprintBytes: Array[Byte] = correct_fingerprint.map(u8 => u8.get.toByte)
+
+    lazy val correctKey: ShmKey = ShmKey(getCorrectSize, getCorrectFingerprintBytes)
   }
 
   // [Request] for shm_retrieve()
-  class ShmRetrieveRequest(runtime: Runtime = runtime) extends Struct(runtime) {
-    val key = new ShmKey
-  }
+  class ShmRetrieveRequest(runtime: Runtime = runtime) extends ShmKey(runtime)
   object ShmRetrieveRequest {
     def apply(key: ShmKey): ShmRetrieveRequest = {
       val ret = new ShmRetrieveRequest
-      ret.key.copyFrom(key)
+      ret.copyKeyFrom(key)
       ret
     }
   }
@@ -130,7 +132,7 @@ object LibMemory {
   object ShmDeleteRequest {
     def apply(key: ShmKey): ShmDeleteRequest = {
       val ret = new ShmDeleteRequest
-      ret.key.copyFrom(key)
+      ret.key.copyKeyFrom(key)
       ret
     }
   }

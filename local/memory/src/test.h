@@ -159,7 +159,7 @@ typedef enum {
   RetrieveInternalError,
 } ShmRetrieveResultStatus;
 
-typedef uint32_t SizeType;
+typedef uint64_t SizeType;
 
 typedef struct {
   SizeType size_bytes;
@@ -172,10 +172,10 @@ typedef struct {
 } ShmAllocateRequest;
 
 typedef struct {
-  ShmAllocateResultStatus status;
-  ShmKey correct_key;
   const void *address;
-  char *error;
+  char *error_message;
+  ShmKey correct_key;
+  ShmAllocateResultStatus status;
 } ShmAllocateResult;
 
 typedef struct {
@@ -257,6 +257,8 @@ typedef struct {
 void shm_allocate(const ShmAllocateRequest *request, ShmAllocateResult *result);
 
 void shm_delete(const ShmDeleteRequest *request, ShmDeleteResult *result);
+
+void shm_free_error_message(char *error_message);
 
 void shm_get_key(const ShmGetKeyRequest *request, ShmKey *result);
 

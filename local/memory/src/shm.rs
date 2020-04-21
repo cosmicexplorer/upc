@@ -9,7 +9,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::convert::{From, Into};
 use std::default::Default;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -19,7 +19,7 @@ use std::slice;
 use std::str;
 use std::sync::Arc;
 
-type SizeType = u32;
+type SizeType = u64;
 
 lazy_static! {
   static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> =
@@ -89,6 +89,7 @@ pub enum CreationBehavior {
   DoNotCreateNew,
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct ShmRequest {
   pub key: ShmKey,
   pub creation_behavior: CreationBehavior,
@@ -188,10 +189,10 @@ pub enum ShmAllocateResultStatus {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ShmAllocateResult {
-  pub status: ShmAllocateResultStatus,
-  pub correct_key: ShmKey,
   pub address: *const os::raw::c_void,
-  pub error: *mut os::raw::c_char,
+  pub error_message: *mut os::raw::c_char,
+  pub correct_key: ShmKey,
+  pub status: ShmAllocateResultStatus,
 }
 impl ShmAllocateResult {
   pub fn successful(address: *const os::raw::c_void) -> Self {
@@ -202,11 +203,11 @@ impl ShmAllocateResult {
       ..Default::default()
     }
   }
-  pub fn failing(error: *mut os::raw::c_char) -> Self {
-    assert!(!error.is_null());
+  pub fn failing(error_message: *mut os::raw::c_char) -> Self {
+    assert!(!error_message.is_null());
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationFailed,
-      error,
+      error_message,
       ..Default::default()
     }
   }
@@ -224,7 +225,7 @@ impl Default for ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationFailed,
       correct_key: ShmKey::default(),
       address: ptr::null(),
-      error: ptr::null_mut(),
+      error_message: ptr::null_mut(),
     }
   }
 }
@@ -289,7 +290,7 @@ impl Default for ShmDeleteResult {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ShmHandle {
   key: ShmKey,
   size_bytes: usize,
@@ -374,6 +375,12 @@ impl ShmHandle {
       creation_behavior,
     } = request;
 
+    std::fs::write(
+      "/Users/dmcclanahan/projects/active/upc/key.txt",
+      &format!("+{:?}", key),
+    )
+    .unwrap();
+
     let maybe_existing_handle: Option<ShmHandle> = {
       let mappings = (*IN_PROCESS_SHM_MAPPINGS).read();
       mappings.get(&key).cloned()
@@ -389,6 +396,12 @@ impl ShmHandle {
         CreationBehavior::DoNotCreateNew => Ok(existing_handle),
       }
     } else {
+      std::fs::write(
+        "/Users/dmcclanahan/projects/active/upc/key.txt",
+        &format!("-{:?}", key),
+      )
+      .unwrap();
+
       let fd_perm = IPC_R
         | IPC_W
         | match creation_behavior {
@@ -396,6 +409,12 @@ impl ShmHandle {
           CreationBehavior::DoNotCreateNew => 0,
         };
       let shm_address_key: key_t = key.into();
+
+      std::fs::write(
+        "/Users/dmcclanahan/projects/active/upc/addr_key.txt",
+        &format!("{:?}", shm_address_key),
+      )
+      .unwrap();
 
       let shm_fd = unsafe {
         let fd = mmap_bindings::shmget(
@@ -410,18 +429,27 @@ impl ShmHandle {
               return Err(ShmError::MappingDidNotExist);
             }
             _ => {
-              return Err(
-                format!(
-                  "failed to open SHM with creation behavior {:?}: {:?}",
-                  creation_behavior, errno,
-                )
-                .into(),
+              let message = format!(
+                "failed to open SHM with creation behavior {:?}: {:?}",
+                creation_behavior, errno,
               );
+              std::fs::write(
+                "/Users/dmcclanahan/projects/active/upc/message.txt",
+                &format!("{:?}", &message),
+              )
+              .unwrap();
+              return Err(message.into());
             }
           }
         }
         fd
       };
+
+      std::fs::write(
+        "/Users/dmcclanahan/projects/active/upc/shm_fd.txt",
+        &format!("{:?}", shm_fd),
+      )
+      .unwrap();
 
       let shmat_prot = 0;
       let mmap_addr = unsafe {
@@ -439,6 +467,12 @@ impl ShmHandle {
         mmap_addr,
         shared_memory_identifier: shm_fd,
       };
+
+      std::fs::write(
+        "/Users/dmcclanahan/projects/active/upc/result.txt",
+        &format!("{:?}", &result),
+      )
+      .unwrap();
 
       match creation_behavior {
         CreationBehavior::CreateNew(source) => {
@@ -496,16 +530,17 @@ impl CCharErrorMessage {
   pub fn new(message: String) -> Self {
     CCharErrorMessage { message }
   }
-  pub fn leak_null_terminated_c_string(self) -> *mut os::raw::c_char {
-    let null_terminated_error_message: Vec<u8> = self
+  pub unsafe fn leak_null_terminated_c_string(self) -> *mut os::raw::c_char {
+    let mut null_terminated_error_message: Vec<u8> = self
       .message
       .as_bytes()
       .iter()
       .chain(&['\0' as u8])
       .cloned()
       .collect();
-    let boxed_bytes: Box<[u8]> = null_terminated_error_message.into();
-    Box::into_raw(boxed_bytes) as *mut os::raw::c_char
+    let buf: *mut u8 = null_terminated_error_message.as_mut_ptr();
+    mem::forget(null_terminated_error_message);
+    mem::transmute::<*mut u8, *mut os::raw::c_char>(buf)
   }
   pub unsafe fn from_c_str(c_str: *const os::raw::c_char) -> Result<Self, str::Utf8Error> {
     let c_str = CStr::from_ptr(c_str);
@@ -536,18 +571,6 @@ impl ShmGetKeyRequest {
   }
 }
 
-/* #[no_mangle] */
-/* pub unsafe extern "C" fn shm_get_key(request: &ShmGetKeyRequest) -> ShmKey { */
-/*   let input_bytes = request.as_slice(); */
-/*   let digest = Digest::of_bytes(input_bytes); */
-/*   let key: ShmKey = digest.into(); */
-/*   key */
-/* } */
-
-/* fn leak<T>(x: T) -> *mut T { */
-/*   Box::into_raw(Box::new(x)) as *mut T */
-/* } */
-
 #[no_mangle]
 pub unsafe extern "C" fn shm_get_key(request: *const ShmGetKeyRequest, result: *mut ShmKey) {
   let input_bytes = (*request).as_slice();
@@ -576,14 +599,30 @@ pub unsafe extern "C" fn shm_allocate(
   request: *const ShmAllocateRequest,
   result: *mut ShmAllocateResult,
 ) {
-  *result = match ShmHandle::new((*request).into()) {
-    /* Ok(shm_handle) => ShmAllocateResult::AllocationSucceeded(shm_handle.get_base_address()), */
+  std::fs::write(
+    "/Users/dmcclanahan/projects/active/upc/request.txt",
+    &format!("+{:?}", request),
+  )
+  .unwrap();
+  let shm_request = (*request).into();
+  std::fs::write(
+    "/Users/dmcclanahan/projects/active/upc/request.txt",
+    &format!(">{:?}", shm_request),
+  )
+  .unwrap();
+
+  *result = match ShmHandle::new(shm_request) {
     Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address()),
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
     Err(e) => {
-      let error = format!("{:?}", e);
-      let error_message = CCharErrorMessage::new(error);
-      ShmAllocateResult::failing(error_message.leak_null_terminated_c_string())
+      let error: String = format!("{:?}", e);
+      std::fs::write(
+        "/Users/dmcclanahan/projects/active/upc/error.txt",
+        &format!("!!{:?}", &error),
+      )
+      .unwrap();
+      let error_message = CString::new(error).unwrap();
+      ShmAllocateResult::failing(error_message.into_raw())
     }
   };
 }
@@ -602,6 +641,11 @@ pub unsafe extern "C" fn shm_delete(
       ShmDeleteResult::internal_error(error_message.leak_null_terminated_c_string())
     }
   };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn shm_free_error_message(error_message: *mut os::raw::c_char) {
+  CString::from_raw(error_message);
 }
 
 #[cfg(test)]
