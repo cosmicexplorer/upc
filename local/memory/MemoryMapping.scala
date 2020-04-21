@@ -1,10 +1,7 @@
 package upc.local.memory
 
-import upc.local.memory.PointerUtil._
-
 import _root_.jnr.ffi._
 
-import java.nio.charset.Charset
 import javax.xml.bind.DatatypeConverter
 import scala.util.Try
 
@@ -155,8 +152,6 @@ trait FromNative[JvmT, NativeT] {
   def fromNative(native: NativeT): Try[JvmT]
 }
 object FromNative {
-  import LibMemory.runtime
-
   implicit class JvmFromNativeWrapper[JvmT, NativeT](native: NativeT)(
     implicit ctx: FromNative[JvmT, NativeT]
   ) {
@@ -227,7 +222,7 @@ object Shm {
   import IntoNative._
   import FromNative._
 
-  import LibMemory.{instance, runtime}
+  import LibMemory.instance
 
   def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try {
     val req = request.intoNative().get
@@ -238,13 +233,8 @@ object Shm {
 
   def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try {
     val req = request.intoNative().get
-    val reqPtr = Struct.getMemory(req)
-
     val res = new LibMemory.ShmAllocateResult
-    val resPtr = Memory.allocateDirect(runtime, Struct.size(res))
-    res.useMemory(resPtr)
-
-    instance.shm_allocate(reqPtr, resPtr)
+    instance.shm_allocate(req, res)
     res.fromNative().get
   }
 

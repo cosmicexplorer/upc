@@ -8,7 +8,7 @@ object LibMemory {
 
   trait Iface {
     def shm_get_key(request: ShmGetKeyRequest, result: ShmKey): Unit
-    def shm_allocate(request: Pointer, result: Pointer): Unit
+    def shm_allocate(request: ShmAllocateRequest, result: ShmAllocateResult): Unit
     def shm_retrieve(request: ShmRetrieveRequest, result: ShmRetrieveResult): Unit
     def shm_delete(request: ShmDeleteRequest, result: ShmDeleteResult): Unit
     def shm_free_error_message(error_message: Pointer): Unit

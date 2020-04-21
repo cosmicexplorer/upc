@@ -25,6 +25,7 @@
 pub mod merkle_trie;
 pub mod remexec;
 
+pub use memory::shm::SizeType;
 use memory::shm::*;
 
 use boxfuture::{BoxFuture, Boxable};
@@ -71,15 +72,15 @@ impl From<merkle_trie::MerkleTrieError> for DirectoryFFIError {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct DirectoryDigest {
+  pub size_bytes: SizeType,
   pub fingerprint: Fingerprint,
-  pub size_bytes: u64,
 }
 impl From<Digest> for DirectoryDigest {
   fn from(digest: Digest) -> Self {
     let Digest(fingerprint, size_bytes) = digest;
     DirectoryDigest {
       fingerprint,
-      size_bytes: size_bytes as u64,
+      size_bytes: size_bytes as SizeType,
     }
   }
 }
@@ -96,8 +97,8 @@ impl Into<Digest> for DirectoryDigest {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct ExpandDirectoriesRequest {
+  pub num_requests: SizeType,
   pub requests: *const DirectoryDigest,
-  pub num_requests: u64,
 }
 impl ExpandDirectoriesRequest {
   pub unsafe fn as_slice(&self) -> &[DirectoryDigest] {
@@ -106,7 +107,7 @@ impl ExpandDirectoriesRequest {
   pub fn from_slice(requests: &[DirectoryDigest]) -> Self {
     ExpandDirectoriesRequest {
       requests: requests.as_ptr(),
-      num_requests: requests.len() as u64,
+      num_requests: requests.len() as SizeType,
     }
   }
 }
@@ -116,8 +117,8 @@ unsafe impl Sync for ExpandDirectoriesRequest {}
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ChildRelPath {
+  relpath_size: SizeType,
   relpath: *const os::raw::c_char,
-  relpath_size: u64,
 }
 impl ChildRelPath {
   pub unsafe fn as_path(&self) -> &Path {
@@ -133,7 +134,7 @@ impl ChildRelPath {
       mem::transmute::<*const u8, *const os::raw::c_char>(Box::into_raw(boxed) as *const u8);
     ChildRelPath {
       relpath,
-      relpath_size: slice.len() as u64,
+      relpath_size: slice.len() as SizeType,
     }
   }
 }
@@ -148,8 +149,8 @@ impl Debug for ChildRelPath {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct FileStat {
-  pub rel_path: ChildRelPath,
   pub key: ShmKey,
+  pub rel_path: ChildRelPath,
 }
 impl Into<merkle_trie::FileStat<ShmKey>> for FileStat {
   fn into(self: Self) -> merkle_trie::FileStat<ShmKey> {
@@ -165,15 +166,15 @@ impl Into<merkle_trie::FileStat<ShmKey>> for FileStat {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct PathStats {
+  num_stats: SizeType,
   stats: *const FileStat,
-  num_stats: u64,
 }
 impl PathStats {
   pub fn from_slice(stats: &[FileStat]) -> Self {
     let num_stats = stats.len();
     PathStats {
       stats: stats.as_ptr(),
-      num_stats: num_stats as u64,
+      num_stats: num_stats as SizeType,
     }
   }
   pub unsafe fn as_slice(&self) -> &[FileStat] {
@@ -186,9 +187,9 @@ unsafe impl Sync for PathStats {}
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ExpandDirectoriesMapping {
+  num_expansions: SizeType,
   digests: *mut DirectoryDigest,
   expansions: *mut PathStats,
-  num_expansions: u64,
 }
 impl ExpandDirectoriesMapping {
   pub fn from_slices<'a>(
@@ -211,7 +212,7 @@ impl ExpandDirectoriesMapping {
       Ok(ExpandDirectoriesMapping {
         digests: Box::into_raw(boxed_digests) as *mut DirectoryDigest,
         expansions: Box::into_raw(boxed_expansions) as *mut PathStats,
-        num_expansions: num_expansions as u64,
+        num_expansions: num_expansions as SizeType,
       })
     }
   }
@@ -261,10 +262,18 @@ unsafe impl Send for ExpandDirectoriesMapping {}
 unsafe impl Sync for ExpandDirectoriesMapping {}
 
 #[repr(C)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ExpandDirectoriesResultStatus {
+  ExpandDirectoriesSucceeded,
+  ExpandDirectoriesFailed,
+}
+
+#[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub enum ExpandDirectoriesResult {
-  ExpandDirectoriesSucceeded(ExpandDirectoriesMapping),
-  ExpandDirectoriesFailed(*mut os::raw::c_char),
+pub struct ExpandDirectoriesResult {
+  pub mapping: ExpandDirectoriesMapping,
+  pub error_message: *mut os::raw::c_char,
+  pub status: ExpandDirectoriesResultStatus,
 }
 
 fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, DirectoryFFIError> {
@@ -286,11 +295,9 @@ fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, Di
         let file_stats: Vec<FileStat> = all_files_content
           .into_iter()
           .zip(all_handles)
-          .map(|(file_content, handle)| {
-            FileStat {
-              rel_path: unsafe { ChildRelPath::leak_new_pointer_from_path(&file_content.path) },
-              key: handle.get_key(),
-            }
+          .map(|(file_content, handle)| FileStat {
+            rel_path: unsafe { ChildRelPath::leak_new_pointer_from_path(&file_content.path) },
+            key: handle.get_key(),
           })
           .collect();
         PathStats::from_slice(&file_stats)
@@ -333,10 +340,8 @@ pub unsafe extern "C" fn directories_expand(
   match result {
     Ok(mapping) => ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping),
     Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      ExpandDirectoriesResult::ExpandDirectoriesFailed(
-        error_message.leak_null_terminated_c_string(),
-      )
+      let error_message = CString::new(format!("{:?}", e)).unwrap();
+      ExpandDirectoriesResult::ExpandDirectoriesFailed(error_message.into_raw())
     }
   }
 }
@@ -344,8 +349,8 @@ pub unsafe extern "C" fn directories_expand(
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct UploadDirectoriesRequest {
+  num_path_stats: SizeType,
   path_stats: *const PathStats,
-  num_path_stats: u64,
 }
 impl UploadDirectoriesRequest {
   pub unsafe fn as_slice(&self) -> &[PathStats] {
@@ -354,15 +359,24 @@ impl UploadDirectoriesRequest {
   pub fn from_slice(path_stats: &[PathStats]) -> Self {
     UploadDirectoriesRequest {
       path_stats: path_stats.as_ptr(),
-      num_path_stats: path_stats.len() as u64,
+      num_path_stats: path_stats.len() as SizeType,
     }
   }
 }
 
 #[repr(C)]
-pub enum UploadDirectoriesResult {
-  UploadDirectoriesSucceeded(ExpandDirectoriesMapping),
-  UploadDirectoriesFailed(*mut os::raw::c_char),
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum UploadDirectoriesResultStatus {
+  UploadDirectoriesSucceeded,
+  UploadDirectoriesFailed,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct UploadDirectoriesResult {
+  pub mapping: ExpandDirectoriesMapping,
+  pub error_message: *mut os::raw::c_char,
+  pub status: UploadDirectoriesResultStatus,
 }
 
 fn directories_upload_single(
@@ -417,10 +431,8 @@ pub unsafe extern "C" fn directories_upload(
   match result {
     Ok(mapping) => UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping),
     Err(e) => {
-      let error_message = CCharErrorMessage::new(format!("{:?}", e));
-      UploadDirectoriesResult::UploadDirectoriesFailed(
-        error_message.leak_null_terminated_c_string(),
-      )
+      let error_message = CString::new(format!("{:?}", e)).unwrap();
+      UploadDirectoriesResult::UploadDirectoriesFailed(error_message.into_raw())
     }
   }
 }
@@ -481,7 +493,7 @@ mod tests {
       ffi_output.iter().map(|stat| stat.clone().into()).collect();
     assert_eq!(ffi_input_vec, ffi_output_vec);
 
-    /* Check that expanded dir also has the same contents! */
+    /* Check that the expanded directory also has the same contents! */
     let expand_request = ExpandDirectoriesRequest::from_slice(&vec![**dir_digest]);
     let expanded_mapping = match unsafe { directories_expand(expand_request) } {
       ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping) => mapping,

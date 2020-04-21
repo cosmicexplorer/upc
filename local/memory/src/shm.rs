@@ -9,17 +9,16 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::convert::{From, Into};
 use std::default::Default;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::os;
 use std::ptr;
 use std::slice;
-use std::str;
 use std::sync::Arc;
 
-type SizeType = u64;
+pub type SizeType = u64;
 
 lazy_static! {
   static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> =
@@ -534,34 +533,6 @@ impl ShmHandle {
   }
 }
 
-#[derive(Debug)]
-pub struct CCharErrorMessage {
-  message: String,
-}
-impl CCharErrorMessage {
-  pub fn new(message: String) -> Self {
-    CCharErrorMessage { message }
-  }
-  pub unsafe fn leak_null_terminated_c_string(self) -> *mut os::raw::c_char {
-    let mut null_terminated_error_message: Vec<u8> = self
-      .message
-      .as_bytes()
-      .iter()
-      .chain(&['\0' as u8])
-      .cloned()
-      .collect();
-    let buf: *mut u8 = null_terminated_error_message.as_mut_ptr();
-    mem::forget(null_terminated_error_message);
-    mem::transmute::<*mut u8, *mut os::raw::c_char>(buf)
-  }
-  pub unsafe fn from_c_str(c_str: *const os::raw::c_char) -> Result<Self, str::Utf8Error> {
-    let c_str = CStr::from_ptr(c_str);
-    str::from_utf8(c_str.to_bytes()).map(|s| CCharErrorMessage {
-      message: s.to_string(),
-    })
-  }
-}
-
 /* This is a preprocessor define, so we have to recreate it. It could be a global variable, but
  * usage of mem::transmute::<>() isn't allowed at top level without a lazy_static!{}. */
 #[allow(non_snake_case)]
@@ -659,6 +630,8 @@ pub unsafe extern "C" fn shm_delete(
   };
 }
 
+/* TODO: this is unused! we just leak error messages right now -- that mostly happens in testing
+ * though, so it's an acceptable loss for now. */
 #[no_mangle]
 pub unsafe extern "C" fn shm_free_error_message(error_message: *mut os::raw::c_char) {
   CString::from_raw(error_message);
