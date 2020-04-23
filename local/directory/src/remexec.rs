@@ -288,6 +288,7 @@ pub fn expand_directory(digest: Digest) -> BoxFuture<Vec<FileContent>, String> {
 pub fn memory_map_file_content(bytes: &[u8]) -> Result<ShmHandle, RemexecError> {
   let digest = Digest::of_bytes(bytes);
   let key: ShmKey = digest.into();
+  dbg!(key);
   let source: *const os::raw::c_void =
     unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) };
   let request = ShmAllocateRequest { key, source };

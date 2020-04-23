@@ -36,11 +36,13 @@ use futures01::{future, Future};
 use protobuf;
 
 use std::convert::{From, Into};
-use std::ffi::OsStr;
+use std::default::Default;
+use std::ffi::{CString, OsStr};
 use std::fmt::{self, Debug};
 use std::mem;
 use std::os::{self, unix::ffi::OsStrExt};
 use std::path::Path;
+use std::ptr;
 use std::slice;
 
 #[derive(Debug)]
@@ -93,6 +95,14 @@ impl Into<Digest> for DirectoryDigest {
     Digest(fingerprint, size_bytes as usize)
   }
 }
+impl Default for DirectoryDigest {
+  fn default() -> Self {
+    DirectoryDigest {
+      size_bytes: 0,
+      fingerprint: hashing::EMPTY_FINGERPRINT,
+    }
+  }
+}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -108,6 +118,14 @@ impl ExpandDirectoriesRequest {
     ExpandDirectoriesRequest {
       requests: requests.as_ptr(),
       num_requests: requests.len() as SizeType,
+    }
+  }
+}
+impl Default for ExpandDirectoriesRequest {
+  fn default() -> Self {
+    ExpandDirectoriesRequest {
+      num_requests: 0,
+      requests: ptr::null(),
     }
   }
 }
@@ -241,6 +259,15 @@ impl ExpandDirectoriesMapping {
       .collect()
   }
 }
+impl Default for ExpandDirectoriesMapping {
+  fn default() -> Self {
+    ExpandDirectoriesMapping {
+      num_expansions: 0,
+      digests: ptr::null_mut(),
+      expansions: ptr::null_mut(),
+    }
+  }
+}
 impl PartialEq for ExpandDirectoriesMapping {
   fn eq(&self, other: &Self) -> bool {
     let owned_paired = self.into_owned_paired();
@@ -274,6 +301,31 @@ pub struct ExpandDirectoriesResult {
   pub mapping: ExpandDirectoriesMapping,
   pub error_message: *mut os::raw::c_char,
   pub status: ExpandDirectoriesResultStatus,
+}
+impl Default for ExpandDirectoriesResult {
+  fn default() -> Self {
+    ExpandDirectoriesResult {
+      mapping: ExpandDirectoriesMapping::default(),
+      error_message: ptr::null_mut(),
+      status: ExpandDirectoriesResultStatus::ExpandDirectoriesFailed,
+    }
+  }
+}
+impl ExpandDirectoriesResult {
+  pub fn successful(mapping: ExpandDirectoriesMapping) -> Self {
+    ExpandDirectoriesResult {
+      mapping,
+      status: ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded,
+      ..Default::default()
+    }
+  }
+  pub fn failed(error_message: *mut os::raw::c_char) -> Self {
+    ExpandDirectoriesResult {
+      status: ExpandDirectoriesResultStatus::ExpandDirectoriesFailed,
+      error_message,
+      ..Default::default()
+    }
+  }
 }
 
 fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, DirectoryFFIError> {
@@ -332,18 +384,19 @@ fn directories_expand_impl(
 
 #[no_mangle]
 pub unsafe extern "C" fn directories_expand(
-  request: ExpandDirectoriesRequest,
-) -> ExpandDirectoriesResult {
-  let digests: &[DirectoryDigest] = request.as_slice();
-  let result: Result<ExpandDirectoriesMapping, _> =
+  request: *const ExpandDirectoriesRequest,
+  result: *mut ExpandDirectoriesResult,
+) {
+  let digests: &[DirectoryDigest] = (*request).as_slice();
+  let expand_result: Result<ExpandDirectoriesMapping, _> =
     remexec::block_on_with_persistent_runtime(directories_expand_impl(digests));
-  match result {
-    Ok(mapping) => ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping),
+  *result = match expand_result {
+    Ok(mapping) => ExpandDirectoriesResult::successful(mapping),
     Err(e) => {
       let error_message = CString::new(format!("{:?}", e)).unwrap();
-      ExpandDirectoriesResult::ExpandDirectoriesFailed(error_message.into_raw())
+      ExpandDirectoriesResult::failed(error_message.into_raw())
     }
-  }
+  };
 }
 
 #[repr(C)]
@@ -363,6 +416,14 @@ impl UploadDirectoriesRequest {
     }
   }
 }
+impl Default for UploadDirectoriesRequest {
+  fn default() -> Self {
+    UploadDirectoriesRequest {
+      num_path_stats: 0,
+      path_stats: ptr::null(),
+    }
+  }
+}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -377,6 +438,31 @@ pub struct UploadDirectoriesResult {
   pub mapping: ExpandDirectoriesMapping,
   pub error_message: *mut os::raw::c_char,
   pub status: UploadDirectoriesResultStatus,
+}
+impl UploadDirectoriesResult {
+  pub fn successful(mapping: ExpandDirectoriesMapping) -> Self {
+    UploadDirectoriesResult {
+      mapping,
+      status: UploadDirectoriesResultStatus::UploadDirectoriesSucceeded,
+      ..Default::default()
+    }
+  }
+  pub fn errored(error_message: *mut os::raw::c_char) -> Self {
+    UploadDirectoriesResult {
+      error_message,
+      status: UploadDirectoriesResultStatus::UploadDirectoriesFailed,
+      ..Default::default()
+    }
+  }
+}
+impl Default for UploadDirectoriesResult {
+  fn default() -> Self {
+    UploadDirectoriesResult {
+      mapping: ExpandDirectoriesMapping::default(),
+      error_message: ptr::null_mut(),
+      status: UploadDirectoriesResultStatus::UploadDirectoriesFailed,
+    }
+  }
 }
 
 fn directories_upload_single(
@@ -422,19 +508,20 @@ fn directories_upload_impl(
 
 #[no_mangle]
 pub unsafe extern "C" fn directories_upload(
-  request: UploadDirectoriesRequest,
-) -> UploadDirectoriesResult {
-  let path_stats: &[PathStats] = request.as_slice();
+  request: *const UploadDirectoriesRequest,
+  result: *mut UploadDirectoriesResult,
+) {
+  let path_stats: &[PathStats] = (*request).as_slice();
   let all_path_stats: Vec<&[FileStat]> = path_stats.iter().map(|stats| stats.as_slice()).collect();
-  let result: Result<ExpandDirectoriesMapping, _> =
+  let upload_result: Result<ExpandDirectoriesMapping, _> =
     remexec::block_on_with_persistent_runtime(directories_upload_impl(&all_path_stats));
-  match result {
-    Ok(mapping) => UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping),
+  *result = match upload_result {
+    Ok(mapping) => UploadDirectoriesResult::successful(mapping),
     Err(e) => {
       let error_message = CString::new(format!("{:?}", e)).unwrap();
-      UploadDirectoriesResult::UploadDirectoriesFailed(error_message.into_raw())
+      UploadDirectoriesResult::errored(error_message.into_raw())
     }
-  }
+  };
 }
 
 #[cfg(test)]
@@ -478,9 +565,11 @@ mod tests {
 
     let upload_request = UploadDirectoriesRequest::from_slice(&input_path_stats);
 
-    let uploaded_mapping = match unsafe { directories_upload(upload_request) } {
-      UploadDirectoriesResult::UploadDirectoriesSucceeded(mapping) => mapping,
-      UploadDirectoriesResult::UploadDirectoriesFailed(_) => unreachable!(),
+    let mut upload_result = UploadDirectoriesResult::default();
+    unsafe { directories_upload(&upload_request, &mut upload_result) }
+    let uploaded_mapping = match (upload_result.status, upload_result.mapping) {
+      (UploadDirectoriesResultStatus::UploadDirectoriesSucceeded, mapping) => mapping,
+      _ => unreachable!(),
     };
     let uploaded = unsafe { uploaded_mapping.into_paired() };
     assert_eq!(1, uploaded.len());
@@ -495,9 +584,11 @@ mod tests {
 
     /* Check that the expanded directory also has the same contents! */
     let expand_request = ExpandDirectoriesRequest::from_slice(&vec![**dir_digest]);
-    let expanded_mapping = match unsafe { directories_expand(expand_request) } {
-      ExpandDirectoriesResult::ExpandDirectoriesSucceeded(mapping) => mapping,
-      ExpandDirectoriesResult::ExpandDirectoriesFailed(_) => unreachable!(),
+    let mut expand_result = ExpandDirectoriesResult::default();
+    unsafe { directories_expand(&expand_request, &mut expand_result) }
+    let expanded_mapping = match (expand_result.status, expand_result.mapping) {
+      (ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded, mapping) => mapping,
+      _ => unreachable!(),
     };
     assert_eq!(uploaded_mapping, expanded_mapping);
 
