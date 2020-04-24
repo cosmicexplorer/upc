@@ -1,7 +1,5 @@
 package upc.local
 
-import upc.local.thrift_java.directory
-import upc.local.thrift_java.file
 import upc.local.thrift_java.process_execution
 
 import java.io.IOException

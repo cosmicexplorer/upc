@@ -1,4 +1,4 @@
-package upc.local.virtual_cli
+package upc.local.virtual_cli.client
 
 import ammonite.ops._
 import org.apache.thrift.transport.TSocket

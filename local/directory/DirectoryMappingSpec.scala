@@ -1,6 +1,7 @@
 package upc.local.directory
 
 import upc.local.memory._
+import upc.local.directory.testutil.TestUtil
 
 import ammonite.ops._
 import org.junit.runner.RunWith
@@ -12,27 +13,12 @@ import scala.util.Try
 
 @RunWith(classOf[JUnitRunner])
 class DirectoryMappingSpec extends FlatSpec with Matchers {
-  def getFile(contents: String): Try[(Array[Byte], MemoryMapping, ShmKey)] = Try {
-    val bytes = contents.getBytes
-    val inputMapping = MemoryMapping.fromArray(bytes)
-    val key = Shm.getKey(ShmGetKeyRequest(inputMapping)).get
-
-    val allocateRequest = ShmAllocateRequest(key, inputMapping)
-    val (allocatedKey, sharedMapping) = Shm.allocate(allocateRequest).get match {
-      case AllocationSucceeded(key, src) => (key, src)
-    }
-    allocatedKey should === (key)
-    sharedMapping.getBytes should === (bytes)
-
-    (bytes, sharedMapping, key)
-  }
-
   "The DirectoryMapping object" should "upload and expand the same directory" in {
-    val (aFile, aMapping, aKey) = getFile("this is file a").get
+    val (aFile, aMapping, aKey) = TestUtil.getFile("this is file a").get
 
-    val (bFile, bMapping, bKey) = getFile("this is file b").get
+    val (bFile, bMapping, bKey) = TestUtil.getFile("this is file b").get
 
-    val (cFile, cMapping, cKey) = getFile("this is file c").get
+    val (cFile, cMapping, cKey) = TestUtil.getFile("this is file c").get
 
     val fileStats = Seq(
       FileStat(aKey, ChildRelPath(RelPath("a.txt"))),

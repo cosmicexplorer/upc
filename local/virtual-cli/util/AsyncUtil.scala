@@ -1,4 +1,4 @@
-package upc.local.virtual_cli
+package upc.local.virtual_cli.util
 
 import java.io.{Closeable => JavaCloseable}
 import scala.concurrent.{blocking, ExecutionContext, Future}

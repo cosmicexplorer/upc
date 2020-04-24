@@ -1,14 +1,26 @@
 namespace rs upc.local.thrift_rust.process_execution
 namespace java upc.local.thrift_java.process_execution
 
-include "glob_matching.thrift"
+struct FileDigest {
+  1: optional string fingerprint,
+  2: optional i64 size_bytes,
+}
 
+struct DirectoryDigest {
+  1: optional string fingerprint,
+  2: optional i64 size_bytes,
+}
+
+struct PathGlobs {
+  1: optional list<string> include_globs,
+  2: optional list<string> exclude_globs,
+}
 
 struct BasicExecuteProcessRequest {
   1: optional list<string> argv,
   2: optional map<string, string> env,
-  // 3: optional directory.DirectoryDigest input_files,
-  // 4: optional glob_matching.PathGlobs output_globs,
+  3: optional DirectoryDigest input_files,
+  4: optional PathGlobs output_globs,
 }
 
 struct VirtualizedExecuteProcessRequest {
@@ -20,9 +32,10 @@ struct VirtualizedExecuteProcessRequest {
 
 struct ExecuteProcessResult {
   1: optional i32 exit_code,
-  // 2: optional file.FileDigest stdout,
-  // 3: optional file.FileDigest stderr,
-  // 4: optional directory.DirectoryDigest output_directory_digest,
+  2: optional FileDigest stdout,
+  3: optional FileDigest stderr,
+  4: optional DirectoryDigest output_directory_digest,
+  // TODO: zipkin span id!!
 }
 
 enum ProcessExecutionErrorCode {

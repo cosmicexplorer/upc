@@ -1,11 +1,13 @@
-package upc.local.virtual_cli
+package upc.local.virtual_cli.client
 
-import upc.local.memory.MemoryMapping
+import upc.local.directory
+import upc.local.memory
 
 import ammonite.ops._
 
 import java.io.{InputStream => JavaInputStream, OutputStream => JavaOutputStream}
 import scala.collection.mutable
+import scala.util.Try
 
 
 trait Readable extends JavaInputStream {
@@ -58,7 +60,7 @@ trait MutableChildren[PathType, EntryType] {
 
 sealed abstract class DirEntry
 
-case class File(bytes: MemoryMapping) extends DirEntry
+case class File(bytes: memory.MemoryMapping) extends DirEntry
     with FileContent {
   override def contentCopy: Array[Byte] = bytes.getBytesCopy
 
@@ -75,4 +77,9 @@ class FileMapping(val allTrackedPaths: mutable.Map[Path, DirEntry]) {
   def update(path: Path, file: File): Unit = this.synchronized {
     allTrackedPaths(path) = file
   }
+
+  def intoPathStats: directory.PathStats = ???
+}
+object FileMapping {
+  def fromPathStats(pathStats: directory.PathStats): FileMapping = ???
 }

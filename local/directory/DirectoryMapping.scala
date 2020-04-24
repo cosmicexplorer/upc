@@ -115,10 +115,6 @@ object DirectoryMappingFromNative {
   implicit object FileStatFromNative
       extends FromNative[FileStat, LibDirectory.FileStat] {
     def fromNative(native: LibDirectory.FileStat): Try[FileStat] = Try {
-      if (native.relpath.get == null) {
-        throw new RuntimeException("?????")
-      }
-
       FileStat(
         key = ShmKey(
           fingerprint = native.getFingerprintBytes,

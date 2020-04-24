@@ -1,6 +1,8 @@
-package upc.local.virtual_cli
+package upc.local.virtual_cli.client
 
 import upc.local.ExitCode
+import upc.local.directory
+import upc.local.memory
 import upc.local.thrift_java.process_execution.{ExecuteProcessResult, ProcessReapService}
 
 import ammonite.ops._
@@ -15,12 +17,13 @@ import scala.concurrent.duration.Duration
 import scala.util.{Try, Success, Failure}
 
 
-sealed abstract class VirtualIOError(message: String, cause: Throwable) extends IOException(message,
-cause)
-case class ThriftClientAcquisitionFailure(message: String) extends VirtualIOError(message, null)
+sealed abstract class VirtualIOError(message: String, cause: Throwable = null)
+    extends IOException(message, cause)
+case class ThriftClientAcquisitionFailure(message: String) extends VirtualIOError(message)
+case class IOInitializationError(message: String) extends VirtualIOError(message)
 case class ExecutionContextCreationError(message: String, cause: Throwable = null)
     extends VirtualIOError(message, cause)
-case class LazyRefCellBadAcquisitionState(message: String) extends VirtualIOError(message, null)
+case class LazyRefCellBadAcquisitionState(message: String) extends VirtualIOError(message)
 
 
 class VFSImpl(val fileMapping: FileMapping) extends DescriptorTrackingVFS(fileMapping)
@@ -144,6 +147,9 @@ trait VirtualizationImplementation {
 
 
 trait MainWrapper extends VirtualizationImplementation {
+  val VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR = "UPC_VFS_FILE_MAPPING_FINGERPRINT"
+  val VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR = "UPC_VFS_FILE_MAPPING_SIZE_BYTES"
+
   val PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH"
 
   val EXECUTOR_NUM_THREADS_ENV_VAR = "UPC_EXECUTOR_NUM_THREADS"
@@ -178,10 +184,18 @@ trait MainWrapper extends VirtualizationImplementation {
     ExecutionContext.fromExecutorService(pool)
   }
 
+  def getIOInitializationConfig(): Try[directory.DirectoryDigest] = Try {
+    val fingerprintHex = sys.env(VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR)
+    val sizeBytes = sys.env(VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR).toLong
+    memory.ShmKey.fromFingerprintHex(fingerprintHex, sizeBytes)
+  }
+
   override def acquireIOServicesConfig(): Try[IOServicesConfig] = for {
+    initDigest <- getIOInitializationConfig()
     processReapServicePath <- extractEnvVarPath(PROCESS_REAP_SERVICE_THRIFT_SOCKET_LOCATION_ENV_VAR)
     executor <- createExecutionContext()
   } yield new IOServicesConfig(
+    initialDigest = initDigest,
     processReapServicePath = processReapServicePath,
     executor = executor,
   )

@@ -1,10 +1,12 @@
-package upc.local.virtual_cli
+package upc.local.virtual_cli.client
 
-import upc.local.{Digest, DirectoryDigest, ExitCode, FileDigest, IOFinalState, CompleteVirtualizedProcessResult}
+// import upc.local.{Digest, DirectoryDigest, ExitCode, FileDigest, IOFinalState, CompleteVirtualizedProcessResult}
+import upc.local
 import upc.local.ViaThrift._
-import upc.local.thrift_java.directory
-import upc.local.thrift_java.file
+import upc.local.directory
+import upc.local.memory
 import upc.local.thrift_java.process_execution
+import upc.local.virtual_cli.util.AsyncCloseable
 
 import ammonite.ops._
 import org.apache.thrift.protocol.TBinaryProtocol
@@ -20,6 +22,7 @@ case class IOServiceClients(
 
 
 class IOServicesConfig(
+  val initialDigest: directory.DirectoryDigest,
   processReapServicePath: Path,
   implicit val executor: ExecutionContext,
 ) extends AsyncCloseable {
@@ -32,9 +35,7 @@ class IOServicesConfig(
   )
 
   import AsyncCloseable.Implicits._
-  override def asyncClose(): Future[Unit] = for {
-    () <- processReapSocket.asyncClose()
-  } yield ()
+  override def asyncClose(): Future[Unit] = processReapSocket.asyncClose()
 }
 
 

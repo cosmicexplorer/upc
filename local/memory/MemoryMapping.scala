@@ -69,6 +69,11 @@ case class ShmKey(fingerprint: Array[Byte], length: Long) {
     s"ShmKey(length=$length, fingerprint=$fingerprintHex)"
   }
 }
+object ShmKey {
+  def fromFingerprintHex(hex: String, length: Long): Try[ShmKey] = Try(ShmKey(
+    fingerprint = DatatypeConverter.parseHexBinary(hex),
+    length = length))
+}
 
 case class ShmGetKeyRequest(source: MemoryMapping)
 
