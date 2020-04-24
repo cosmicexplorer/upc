@@ -33,15 +33,16 @@ use fs::FileContent;
 use hashing::{Digest, Fingerprint};
 
 use futures01::{future, Future};
+use indexmap::IndexMap;
 use protobuf;
 
 use std::convert::{From, Into};
 use std::default::Default;
 use std::ffi::{CString, OsStr};
-use std::fmt::{self, Debug};
+use std::fmt::Debug;
 use std::mem;
 use std::os::{self, unix::ffi::OsStrExt};
-use std::path::Path;
+use std::path::PathBuf;
 use std::ptr;
 use std::slice;
 
@@ -110,27 +111,36 @@ pub struct ExpandDirectoriesRequest {
   pub num_requests: SizeType,
   pub requests: *const DirectoryDigest,
 }
-impl ExpandDirectoriesRequest {
-  pub unsafe fn as_slice(&self) -> &[DirectoryDigest] {
-    slice::from_raw_parts(self.requests, self.num_requests as usize)
+
+pub trait NativeWrapper<T> {
+  unsafe fn from_ffi(req: T) -> Self;
+  fn into_ffi(self) -> T;
+}
+
+#[derive(Debug, Clone)]
+pub struct HighLevelExpandDirectoriesRequest {
+  pub requests: Vec<DirectoryDigest>,
+}
+impl NativeWrapper<ExpandDirectoriesRequest> for HighLevelExpandDirectoriesRequest {
+  unsafe fn from_ffi(req: ExpandDirectoriesRequest) -> Self {
+    let ExpandDirectoriesRequest {
+      num_requests,
+      requests,
+    } = req;
+    HighLevelExpandDirectoriesRequest {
+      requests: slice::from_raw_parts(requests, num_requests as usize).to_vec(),
+    }
   }
-  pub fn from_slice(requests: &[DirectoryDigest]) -> Self {
-    ExpandDirectoriesRequest {
+  fn into_ffi(self) -> ExpandDirectoriesRequest {
+    let HighLevelExpandDirectoriesRequest { requests } = self;
+    let ret = ExpandDirectoriesRequest {
       requests: requests.as_ptr(),
       num_requests: requests.len() as SizeType,
-    }
+    };
+    mem::forget(requests);
+    ret
   }
 }
-impl Default for ExpandDirectoriesRequest {
-  fn default() -> Self {
-    ExpandDirectoriesRequest {
-      num_requests: 0,
-      requests: ptr::null(),
-    }
-  }
-}
-unsafe impl Send for ExpandDirectoriesRequest {}
-unsafe impl Sync for ExpandDirectoriesRequest {}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -138,42 +148,71 @@ pub struct ChildRelPath {
   relpath_size: SizeType,
   relpath: *const os::raw::c_char,
 }
-impl ChildRelPath {
-  pub unsafe fn as_path(&self) -> &Path {
-    let bytes_ptr: *const u8 = mem::transmute::<*const os::raw::c_char, *const u8>(self.relpath);
-    let slice: &[u8] = slice::from_raw_parts(bytes_ptr, self.relpath_size as usize);
-    Path::new(OsStr::from_bytes(slice))
-  }
-  pub unsafe fn leak_new_pointer_from_path(path: &Path) -> Self {
-    let slice: &[u8] = path.as_os_str().as_bytes();
-    let owned: Vec<u8> = slice.to_vec();
-    let boxed: Box<[u8]> = owned.into();
-    let relpath: *const os::raw::c_char =
-      mem::transmute::<*const u8, *const os::raw::c_char>(Box::into_raw(boxed) as *const u8);
-    ChildRelPath {
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct HighLevelChildRelPath {
+  pub path: PathBuf,
+}
+impl NativeWrapper<ChildRelPath> for HighLevelChildRelPath {
+  unsafe fn from_ffi(path: ChildRelPath) -> Self {
+    let ChildRelPath {
+      relpath_size,
       relpath,
-      relpath_size: slice.len() as SizeType,
+    } = path;
+    let bytes_ptr: *const u8 = mem::transmute::<*const os::raw::c_char, *const u8>(relpath);
+    let slice: &[u8] = slice::from_raw_parts(bytes_ptr, relpath_size as usize);
+    HighLevelChildRelPath {
+      path: PathBuf::from(OsStr::from_bytes(slice)),
     }
   }
-}
-impl Debug for ChildRelPath {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "ChildRelPath({:?})", unsafe { self.as_path() })
+  fn into_ffi(self) -> ChildRelPath {
+    let HighLevelChildRelPath { path } = self;
+    let (len, path_str) = {
+      let os_str = path.into_os_string();
+      (os_str.len(), CString::new(os_str.as_bytes()).unwrap())
+    };
+
+    ChildRelPath {
+      relpath_size: len as SizeType,
+      relpath: path_str.into_raw(),
+    }
   }
 }
 
 /* NB: we remove all directories from path stats!!! all path stats *strictly* just contain file
  * paths!! directory paths are *INFERRED*!!!! */
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct FileStat {
   pub key: ShmKey,
   pub rel_path: ChildRelPath,
 }
-impl Into<merkle_trie::FileStat<ShmKey>> for FileStat {
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct HighLevelFileStat {
+  pub key: ShmKey,
+  pub rel_path: HighLevelChildRelPath,
+}
+impl NativeWrapper<FileStat> for HighLevelFileStat {
+  unsafe fn from_ffi(file_stat: FileStat) -> Self {
+    let FileStat { key, rel_path } = file_stat;
+    HighLevelFileStat {
+      key,
+      rel_path: HighLevelChildRelPath::from_ffi(rel_path),
+    }
+  }
+  fn into_ffi(self) -> FileStat {
+    let HighLevelFileStat { key, rel_path } = self;
+    FileStat {
+      key,
+      rel_path: rel_path.into_ffi(),
+    }
+  }
+}
+impl Into<merkle_trie::FileStat<ShmKey>> for HighLevelFileStat {
   fn into(self: Self) -> merkle_trie::FileStat<ShmKey> {
-    let FileStat { rel_path, key } = self;
-    let components = merkle_trie::PathComponents::from_path(unsafe { rel_path.as_path() }).unwrap();
+    let HighLevelFileStat { rel_path, key } = self;
+    let components = merkle_trie::PathComponents::from_path(rel_path.path.as_path()).unwrap();
     merkle_trie::FileStat {
       components,
       terminal: merkle_trie::MerkleTrieTerminalEntry::File(key),
@@ -187,106 +226,99 @@ pub struct PathStats {
   num_stats: SizeType,
   stats: *const FileStat,
 }
-impl PathStats {
-  pub fn from_slice(stats: &[FileStat]) -> Self {
-    let num_stats = stats.len();
-    PathStats {
-      stats: stats.as_ptr(),
-      num_stats: num_stats as SizeType,
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct HighLevelPathStats {
+  pub stats: Vec<HighLevelFileStat>,
+}
+impl NativeWrapper<PathStats> for HighLevelPathStats {
+  unsafe fn from_ffi(path_stats: PathStats) -> Self {
+    let PathStats { num_stats, stats } = path_stats;
+    let slice: &[FileStat] = slice::from_raw_parts(stats, num_stats as usize);
+    HighLevelPathStats {
+      stats: slice
+        .iter()
+        .map(|file_stat| HighLevelFileStat::from_ffi(*file_stat))
+        .collect(),
     }
   }
-  pub unsafe fn as_slice(&self) -> &[FileStat] {
-    slice::from_raw_parts(self.stats, self.num_stats as usize)
+  fn into_ffi(self) -> PathStats {
+    let HighLevelPathStats { stats } = self;
+    let owned: Vec<FileStat> = stats
+      .into_iter()
+      .map(|file_stat| file_stat.into_ffi())
+      .collect();
+    let ret = PathStats {
+      num_stats: owned.len() as SizeType,
+      stats: owned.as_ptr(),
+    };
+    mem::forget(owned);
+    ret
   }
 }
-unsafe impl Send for PathStats {}
-unsafe impl Sync for PathStats {}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ExpandDirectoriesMapping {
   num_expansions: SizeType,
-  digests: *mut DirectoryDigest,
-  expansions: *mut PathStats,
-}
-impl ExpandDirectoriesMapping {
-  pub fn from_slices<'a>(
-    digests: &'a [DirectoryDigest],
-    expansions: &'a [PathStats],
-  ) -> Result<Self, DirectoryFFIError> {
-    let num_digests = digests.len();
-    let num_expansions = expansions.len();
-    if num_digests != num_expansions {
-      Err(
-        format!(
-          "slices for digests (length {:?}) and expansions (length {:?}) were not the same!",
-          num_digests, num_expansions,
-        )
-        .into(),
-      )
-    } else {
-      let boxed_digests: Box<[DirectoryDigest]> = Box::from(digests);
-      let boxed_expansions: Box<[PathStats]> = Box::from(expansions);
-      Ok(ExpandDirectoriesMapping {
-        digests: Box::into_raw(boxed_digests) as *mut DirectoryDigest,
-        expansions: Box::into_raw(boxed_expansions) as *mut PathStats,
-        num_expansions: num_expansions as SizeType,
-      })
-    }
-  }
-  pub unsafe fn into_paired(&self) -> Vec<(&DirectoryDigest, &PathStats)> {
-    slice::from_raw_parts(self.digests, self.num_expansions as usize)
-      .iter()
-      .zip(slice::from_raw_parts(
-        self.expansions,
-        self.num_expansions as usize,
-      ))
-      .collect()
-  }
-
-  fn into_owned_paired(&self) -> Vec<(DirectoryDigest, Vec<(std::path::PathBuf, ShmKey)>)> {
-    unsafe { self.into_paired() }
-      .into_iter()
-      .map(|(digest, path_stats)| {
-        (
-          *digest,
-          unsafe { path_stats.as_slice() }
-            .iter()
-            .map(|FileStat { rel_path, key }| (unsafe { rel_path.as_path() }.to_path_buf(), *key))
-            .collect(),
-        )
-      })
-      .collect()
-  }
+  digests: *const DirectoryDigest,
+  expansions: *const PathStats,
 }
 impl Default for ExpandDirectoriesMapping {
   fn default() -> Self {
     ExpandDirectoriesMapping {
       num_expansions: 0,
-      digests: ptr::null_mut(),
-      expansions: ptr::null_mut(),
+      digests: ptr::null(),
+      expansions: ptr::null(),
     }
   }
 }
-impl PartialEq for ExpandDirectoriesMapping {
-  fn eq(&self, other: &Self) -> bool {
-    let owned_paired = self.into_owned_paired();
-    let other_paired = other.into_owned_paired();
-    owned_paired == other_paired
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct HighLevelExpandDirectoriesMapping {
+  pub mapping: IndexMap<DirectoryDigest, HighLevelPathStats>,
+}
+impl NativeWrapper<ExpandDirectoriesMapping> for HighLevelExpandDirectoriesMapping {
+  unsafe fn from_ffi(mapping: ExpandDirectoriesMapping) -> Self {
+    let ExpandDirectoriesMapping {
+      num_expansions,
+      digests,
+      expansions,
+    } = mapping;
+    let path_stats: &[PathStats] = slice::from_raw_parts(expansions, num_expansions as usize);
+    let digests = slice::from_raw_parts(digests, num_expansions as usize);
+    HighLevelExpandDirectoriesMapping {
+      mapping: digests
+        .iter()
+        .cloned()
+        .zip(
+          path_stats
+            .iter()
+            .map(|path_stats| HighLevelPathStats::from_ffi(*path_stats)),
+        )
+        .collect(),
+    }
+  }
+  fn into_ffi(self) -> ExpandDirectoriesMapping {
+    let HighLevelExpandDirectoriesMapping { mapping } = self;
+    let (digests, path_stats): (Vec<DirectoryDigest>, Vec<PathStats>) = mapping.into_iter().fold(
+      (vec![], vec![]),
+      |(mut digests, mut path_stats), (digest, path_stat)| {
+        digests.push(digest);
+        path_stats.push(path_stat.into_ffi());
+        (digests, path_stats)
+      },
+    );
+    let ret = ExpandDirectoriesMapping {
+      num_expansions: digests.len() as SizeType,
+      digests: digests.as_ptr(),
+      expansions: path_stats.as_ptr(),
+    };
+    mem::forget(digests);
+    mem::forget(path_stats);
+    ret
   }
 }
-impl Eq for ExpandDirectoriesMapping {}
-impl Debug for ExpandDirectoriesMapping {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(
-      f,
-      "ExpandDirectoriesMapping({:?})",
-      self.into_owned_paired()
-    )
-  }
-}
-unsafe impl Send for ExpandDirectoriesMapping {}
-unsafe impl Sync for ExpandDirectoriesMapping {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -296,7 +328,7 @@ pub enum ExpandDirectoriesResultStatus {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct ExpandDirectoriesResult {
   pub mapping: ExpandDirectoriesMapping,
   pub error_message: *mut os::raw::c_char,
@@ -311,24 +343,49 @@ impl Default for ExpandDirectoriesResult {
     }
   }
 }
-impl ExpandDirectoriesResult {
-  pub fn successful(mapping: ExpandDirectoriesMapping) -> Self {
-    ExpandDirectoriesResult {
+
+#[derive(Debug, Clone)]
+pub enum HighLevelExpandDirectoriesResult {
+  Successful(HighLevelExpandDirectoriesMapping),
+  Failed(CString),
+}
+impl NativeWrapper<ExpandDirectoriesResult> for HighLevelExpandDirectoriesResult {
+  unsafe fn from_ffi(result: ExpandDirectoriesResult) -> Self {
+    let ExpandDirectoriesResult {
       mapping,
-      status: ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded,
-      ..Default::default()
+      error_message,
+      status,
+    } = result;
+    match status {
+      ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded => {
+        HighLevelExpandDirectoriesResult::Successful(HighLevelExpandDirectoriesMapping::from_ffi(
+          mapping,
+        ))
+      }
+      ExpandDirectoriesResultStatus::ExpandDirectoriesFailed => {
+        HighLevelExpandDirectoriesResult::Failed(CString::from_raw(error_message))
+      }
     }
   }
-  pub fn failed(error_message: *mut os::raw::c_char) -> Self {
-    ExpandDirectoriesResult {
-      status: ExpandDirectoriesResultStatus::ExpandDirectoriesFailed,
-      error_message,
-      ..Default::default()
+  fn into_ffi(self) -> ExpandDirectoriesResult {
+    match self {
+      Self::Successful(mapping) => ExpandDirectoriesResult {
+        mapping: mapping.into_ffi(),
+        error_message: ptr::null_mut(),
+        status: ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded,
+      },
+      Self::Failed(error_message) => ExpandDirectoriesResult {
+        mapping: ExpandDirectoriesMapping::default(),
+        error_message: error_message.into_raw(),
+        status: ExpandDirectoriesResultStatus::ExpandDirectoriesFailed,
+      },
     }
   }
 }
 
-fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, DirectoryFFIError> {
+fn directories_expand_single(
+  digest: DirectoryDigest,
+) -> BoxFuture<HighLevelPathStats, DirectoryFFIError> {
   let pants_digest: Digest = digest.into();
   let all_files_content: BoxFuture<Vec<FileContent>, String> =
     remexec::expand_directory(pants_digest);
@@ -343,16 +400,19 @@ fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, Di
             .map_err(|e| DirectoryFFIError::from(format!("{:?}", e)))
         })
         .collect();
-      let as_path_stats: Result<PathStats, _> = file_uploads.map(|all_handles| {
-        let file_stats: Vec<FileStat> = all_files_content
+      let as_path_stats: Result<HighLevelPathStats, _> = file_uploads.map(|all_handles| {
+        let file_stats: Vec<HighLevelFileStat> = all_files_content
           .into_iter()
           .zip(all_handles)
-          .map(|(file_content, handle)| FileStat {
-            rel_path: unsafe { ChildRelPath::leak_new_pointer_from_path(&file_content.path) },
+          .map(|(file_content, handle)| HighLevelFileStat {
             key: handle.get_key(),
+            rel_path: HighLevelChildRelPath {
+              path: file_content.path.as_path().to_path_buf(),
+            },
           })
           .collect();
-        PathStats::from_slice(&file_stats)
+        dbg!(&file_stats);
+        HighLevelPathStats { stats: file_stats }
       });
       future::result(as_path_stats)
     })
@@ -360,24 +420,25 @@ fn directories_expand_single(digest: DirectoryDigest) -> BoxFuture<PathStats, Di
 }
 
 fn directories_expand_impl(
-  digests: &[DirectoryDigest],
-) -> BoxFuture<ExpandDirectoriesMapping, DirectoryFFIError> {
-  let digests: Vec<DirectoryDigest> = digests.to_vec();
-
-  let expand_tasks: Vec<BoxFuture<PathStats, _>> = digests
+  digests: Vec<DirectoryDigest>,
+) -> BoxFuture<HighLevelExpandDirectoriesMapping, DirectoryFFIError> {
+  let expand_tasks: Vec<BoxFuture<HighLevelPathStats, _>> = digests
     .clone()
     .into_iter()
     .map(|digest| directories_expand_single(digest))
     .collect();
-  let all_path_stats: BoxFuture<Vec<PathStats>, _> = future::join_all(expand_tasks).to_boxed();
+  let all_path_stats: BoxFuture<Vec<HighLevelPathStats>, _> =
+    future::join_all(expand_tasks).to_boxed();
 
   all_path_stats
-    .and_then(move |all_path_stats| {
-      future::result(ExpandDirectoriesMapping::from_slices(
-        &digests,
-        &all_path_stats,
-      ))
-      .to_boxed()
+    .map(move |all_path_stats| {
+      dbg!(&all_path_stats);
+      HighLevelExpandDirectoriesMapping {
+        mapping: digests
+          .into_iter()
+          .zip(all_path_stats.into_iter())
+          .collect(),
+      }
     })
     .to_boxed()
 }
@@ -387,16 +448,15 @@ pub unsafe extern "C" fn directories_expand(
   request: *const ExpandDirectoriesRequest,
   result: *mut ExpandDirectoriesResult,
 ) {
-  let digests: &[DirectoryDigest] = (*request).as_slice();
-  let expand_result: Result<ExpandDirectoriesMapping, _> =
-    remexec::block_on_with_persistent_runtime(directories_expand_impl(digests));
-  *result = match expand_result {
-    Ok(mapping) => ExpandDirectoriesResult::successful(mapping),
-    Err(e) => {
-      let error_message = CString::new(format!("{:?}", e)).unwrap();
-      ExpandDirectoriesResult::failed(error_message.into_raw())
-    }
+  let owned_request = HighLevelExpandDirectoriesRequest::from_ffi(*request);
+  let HighLevelExpandDirectoriesRequest { requests } = owned_request;
+  let expand_result: Result<HighLevelExpandDirectoriesMapping, _> =
+    remexec::block_on_with_persistent_runtime(directories_expand_impl(requests));
+  let owned_result = match expand_result {
+    Ok(mapping) => HighLevelExpandDirectoriesResult::Successful(mapping),
+    Err(e) => HighLevelExpandDirectoriesResult::Failed(CString::new(format!("{:?}", e)).unwrap()),
   };
+  *result = owned_result.into_ffi();
 }
 
 #[repr(C)]
@@ -405,23 +465,36 @@ pub struct UploadDirectoriesRequest {
   num_path_stats: SizeType,
   path_stats: *const PathStats,
 }
-impl UploadDirectoriesRequest {
-  pub unsafe fn as_slice(&self) -> &[PathStats] {
-    slice::from_raw_parts(self.path_stats, self.num_path_stats as usize)
-  }
-  pub fn from_slice(path_stats: &[PathStats]) -> Self {
-    UploadDirectoriesRequest {
-      path_stats: path_stats.as_ptr(),
-      num_path_stats: path_stats.len() as SizeType,
-    }
-  }
+
+pub struct HighLevelUploadDirectoriesRequest {
+  pub path_stats: Vec<HighLevelPathStats>,
 }
-impl Default for UploadDirectoriesRequest {
-  fn default() -> Self {
-    UploadDirectoriesRequest {
-      num_path_stats: 0,
-      path_stats: ptr::null(),
+impl NativeWrapper<UploadDirectoriesRequest> for HighLevelUploadDirectoriesRequest {
+  unsafe fn from_ffi(req: UploadDirectoriesRequest) -> Self {
+    let UploadDirectoriesRequest {
+      num_path_stats,
+      path_stats,
+    } = req;
+    let path_stats: &[PathStats] = slice::from_raw_parts(path_stats, num_path_stats as usize);
+    HighLevelUploadDirectoriesRequest {
+      path_stats: path_stats
+        .iter()
+        .map(|path_stats| HighLevelPathStats::from_ffi(*path_stats))
+        .collect(),
     }
+  }
+  fn into_ffi(self) -> UploadDirectoriesRequest {
+    let HighLevelUploadDirectoriesRequest { path_stats } = self;
+    let owned: Vec<PathStats> = path_stats
+      .into_iter()
+      .map(|path_stats| path_stats.into_ffi())
+      .collect();
+    let ret = UploadDirectoriesRequest {
+      num_path_stats: owned.len() as SizeType,
+      path_stats: owned.as_ptr(),
+    };
+    mem::forget(owned);
+    ret
   }
 }
 
@@ -433,27 +506,11 @@ pub enum UploadDirectoriesResultStatus {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct UploadDirectoriesResult {
   pub mapping: ExpandDirectoriesMapping,
   pub error_message: *mut os::raw::c_char,
   pub status: UploadDirectoriesResultStatus,
-}
-impl UploadDirectoriesResult {
-  pub fn successful(mapping: ExpandDirectoriesMapping) -> Self {
-    UploadDirectoriesResult {
-      mapping,
-      status: UploadDirectoriesResultStatus::UploadDirectoriesSucceeded,
-      ..Default::default()
-    }
-  }
-  pub fn errored(error_message: *mut os::raw::c_char) -> Self {
-    UploadDirectoriesResult {
-      error_message,
-      status: UploadDirectoriesResultStatus::UploadDirectoriesFailed,
-      ..Default::default()
-    }
-  }
 }
 impl Default for UploadDirectoriesResult {
   fn default() -> Self {
@@ -465,12 +522,52 @@ impl Default for UploadDirectoriesResult {
   }
 }
 
+#[derive(Debug, Clone)]
+pub enum HighLevelUploadDirectoriesResult {
+  Successful(HighLevelExpandDirectoriesMapping),
+  Failed(CString),
+}
+impl NativeWrapper<UploadDirectoriesResult> for HighLevelUploadDirectoriesResult {
+  unsafe fn from_ffi(result: UploadDirectoriesResult) -> Self {
+    let UploadDirectoriesResult {
+      mapping,
+      error_message,
+      status,
+    } = result;
+    match status {
+      UploadDirectoriesResultStatus::UploadDirectoriesSucceeded => {
+        HighLevelUploadDirectoriesResult::Successful(HighLevelExpandDirectoriesMapping::from_ffi(
+          mapping,
+        ))
+      }
+      UploadDirectoriesResultStatus::UploadDirectoriesFailed => {
+        HighLevelUploadDirectoriesResult::Failed(CString::from_raw(error_message))
+      }
+    }
+  }
+  fn into_ffi(self) -> UploadDirectoriesResult {
+    match self {
+      Self::Successful(mapping) => UploadDirectoriesResult {
+        mapping: mapping.into_ffi(),
+        error_message: ptr::null_mut(),
+        status: UploadDirectoriesResultStatus::UploadDirectoriesSucceeded,
+      },
+      Self::Failed(error_message) => UploadDirectoriesResult {
+        mapping: ExpandDirectoriesMapping::default(),
+        error_message: error_message.into_raw(),
+        status: UploadDirectoriesResultStatus::UploadDirectoriesFailed,
+      },
+    }
+  }
+}
+
 fn directories_upload_single(
-  file_stats: &[FileStat],
+  path_stats: HighLevelPathStats,
 ) -> BoxFuture<DirectoryDigest, DirectoryFFIError> {
+  let HighLevelPathStats { stats } = path_stats;
   let mut trie = merkle_trie::MerkleTrie::<ShmKey>::new();
   let abstract_stats: Vec<merkle_trie::FileStat<ShmKey>> =
-    file_stats.iter().cloned().map(|stat| stat.into()).collect();
+    stats.into_iter().map(|stat| stat.into()).collect();
   dbg!(&abstract_stats);
   future::result(
     trie
@@ -486,22 +583,17 @@ fn directories_upload_single(
 }
 
 fn directories_upload_impl(
-  all_path_stats: &[&[FileStat]],
-) -> BoxFuture<ExpandDirectoriesMapping, DirectoryFFIError> {
-  let expansions: Vec<PathStats> = all_path_stats
+  expansions: Vec<HighLevelPathStats>,
+) -> BoxFuture<HighLevelExpandDirectoriesMapping, DirectoryFFIError> {
+  let upload_tasks: Vec<BoxFuture<DirectoryDigest, _>> = expansions
     .iter()
-    .map(|stats| PathStats::from_slice(stats))
-    .collect();
-
-  let upload_tasks: Vec<BoxFuture<DirectoryDigest, _>> = all_path_stats
-    .iter()
-    .map(|file_stats| directories_upload_single(file_stats))
+    .map(|file_stats| directories_upload_single(file_stats.clone()))
     .collect();
   let digests: BoxFuture<Vec<DirectoryDigest>, _> = future::join_all(upload_tasks).to_boxed();
 
   digests
-    .and_then(move |digests| {
-      future::result(ExpandDirectoriesMapping::from_slices(&digests, &expansions)).to_boxed()
+    .map(move |digests| HighLevelExpandDirectoriesMapping {
+      mapping: digests.into_iter().zip(expansions.into_iter()).collect(),
     })
     .to_boxed()
 }
@@ -511,17 +603,15 @@ pub unsafe extern "C" fn directories_upload(
   request: *const UploadDirectoriesRequest,
   result: *mut UploadDirectoriesResult,
 ) {
-  let path_stats: &[PathStats] = (*request).as_slice();
-  let all_path_stats: Vec<&[FileStat]> = path_stats.iter().map(|stats| stats.as_slice()).collect();
-  let upload_result: Result<ExpandDirectoriesMapping, _> =
-    remexec::block_on_with_persistent_runtime(directories_upload_impl(&all_path_stats));
-  *result = match upload_result {
-    Ok(mapping) => UploadDirectoriesResult::successful(mapping),
-    Err(e) => {
-      let error_message = CString::new(format!("{:?}", e)).unwrap();
-      UploadDirectoriesResult::errored(error_message.into_raw())
-    }
+  let owned_request = HighLevelUploadDirectoriesRequest::from_ffi(*request);
+  let HighLevelUploadDirectoriesRequest { path_stats } = owned_request;
+  let upload_result: Result<HighLevelExpandDirectoriesMapping, _> =
+    remexec::block_on_with_persistent_runtime(directories_upload_impl(path_stats));
+  let owned_result = match upload_result {
+    Ok(mapping) => HighLevelUploadDirectoriesResult::Successful(mapping),
+    Err(e) => HighLevelUploadDirectoriesResult::Failed(CString::new(format!("{:?}", e)).unwrap()),
   };
+  *result = owned_result.into_ffi();
 }
 
 #[cfg(test)]
@@ -551,43 +641,58 @@ mod tests {
       .into_iter()
       .map(|(c, key)| (c.into_path(), key))
       .collect();
-    let ffi_input: Vec<FileStat> = ffi_mapped
+    let ffi_input: Vec<HighLevelFileStat> = ffi_mapped
       .iter()
       .map(|(path, key)| {
-        let rel_path = unsafe { ChildRelPath::leak_new_pointer_from_path(&path) };
-        FileStat {
+        let rel_path = HighLevelChildRelPath { path: path.clone() };
+        HighLevelFileStat {
           rel_path,
           key: *key,
         }
       })
       .collect();
-    let input_path_stats = vec![PathStats::from_slice(&ffi_input)];
+    let input_path_stats = vec![HighLevelPathStats {
+      stats: ffi_input.clone(),
+    }];
 
-    let upload_request = UploadDirectoriesRequest::from_slice(&input_path_stats);
+    let upload_request = HighLevelUploadDirectoriesRequest {
+      path_stats: input_path_stats,
+    };
+    let upload_request_low_level = upload_request.into_ffi();
 
-    let mut upload_result = UploadDirectoriesResult::default();
-    unsafe { directories_upload(&upload_request, &mut upload_result) }
-    let uploaded_mapping = match (upload_result.status, upload_result.mapping) {
-      (UploadDirectoriesResultStatus::UploadDirectoriesSucceeded, mapping) => mapping,
+    let mut upload_result_low_level = UploadDirectoriesResult::default();
+    unsafe { directories_upload(&upload_request_low_level, &mut upload_result_low_level) }
+    let upload_result =
+      unsafe { HighLevelUploadDirectoriesResult::from_ffi(upload_result_low_level) };
+
+    let uploaded_mapping = match upload_result {
+      HighLevelUploadDirectoriesResult::Successful(mapping) => mapping,
       _ => unreachable!(),
     };
-    let uploaded = unsafe { uploaded_mapping.into_paired() };
+    let uploaded: Vec<(DirectoryDigest, HighLevelPathStats)> = uploaded_mapping
+      .mapping
+      .iter()
+      .map(|(dig, stats)| (dig.clone(), stats.clone()))
+      .collect();
     assert_eq!(1, uploaded.len());
     let (dir_digest, path_stats) = uploaded.get(0).unwrap();
 
-    let ffi_output = unsafe { path_stats.as_slice() }.to_vec();
-    let ffi_input_vec: Vec<merkle_trie::FileStat<ShmKey>> =
-      ffi_input.iter().map(|stat| stat.clone().into()).collect();
-    let ffi_output_vec: Vec<merkle_trie::FileStat<ShmKey>> =
-      ffi_output.iter().map(|stat| stat.clone().into()).collect();
-    assert_eq!(ffi_input_vec, ffi_output_vec);
+    let ffi_output = path_stats.stats.clone();
+    assert_eq!(ffi_input, ffi_output);
 
     /* Check that the expanded directory also has the same contents! */
-    let expand_request = ExpandDirectoriesRequest::from_slice(&vec![**dir_digest]);
-    let mut expand_result = ExpandDirectoriesResult::default();
-    unsafe { directories_expand(&expand_request, &mut expand_result) }
-    let expanded_mapping = match (expand_result.status, expand_result.mapping) {
-      (ExpandDirectoriesResultStatus::ExpandDirectoriesSucceeded, mapping) => mapping,
+    let expand_request = HighLevelExpandDirectoriesRequest {
+      requests: vec![*dir_digest],
+    };
+    let expand_request_low_level = expand_request.into_ffi();
+
+    let mut expand_result_low_level = ExpandDirectoriesResult::default();
+    unsafe { directories_expand(&expand_request_low_level, &mut expand_result_low_level) }
+    let expand_result =
+      unsafe { HighLevelExpandDirectoriesResult::from_ffi(expand_result_low_level) };
+
+    let expanded_mapping = match expand_result {
+      HighLevelExpandDirectoriesResult::Successful(mapping) => mapping,
       _ => unreachable!(),
     };
     assert_eq!(uploaded_mapping, expanded_mapping);

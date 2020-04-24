@@ -40,14 +40,14 @@ class DirectoryMappingSpec extends FlatSpec with Matchers {
       FileStat(cKey, ChildRelPath(RelPath("d/e.txt"))),
     )
 
-    val pathStats = Seq(PathStats(fileStats))
-    val upload_req = UploadDirectoriesRequest(pathStats)
+    val pathStats = PathStats(fileStats)
+    val upload_req = UploadDirectoriesRequest(Seq(pathStats))
     val upload_result = DirectoryMapping.upload(upload_req).get
     val upload_mapping = upload_result match {
       case UploadSucceeded(mapping) => mapping
     }
     upload_mapping.mapping.size should be (1)
-    val (uploadDigest, uploadStats) = upload_mapping.mapping.toSeq.apply(1)
+    val (uploadDigest, uploadStats) = upload_mapping.mapping.toSeq.apply(0)
     uploadStats should === (pathStats)
 
     val expand_req = ExpandDirectoriesRequest(Seq(uploadDigest))

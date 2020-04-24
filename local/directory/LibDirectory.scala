@@ -88,15 +88,15 @@ object LibDirectory {
     structs match {
       case Seq() => (0, jnr.ffi.Pointer.wrap(runtime, 0))
       case Seq(first, _*) => {
-        var curIdx = 0
+        var curLength = 0
         val size = Struct.size(first)
         val intermediateArray: Array[Byte] = new Array(size)
         val ptr = Memory.allocateDirect(runtime, size * structs.length)
         structs.foreach { stat =>
           val curPtr = Struct.getMemory(stat)
           curPtr.get(0, intermediateArray, 0, size)
-          ptr.put(curIdx * size, intermediateArray, 0, size)
-          curIdx += size
+          ptr.put(curLength, intermediateArray, 0, size)
+          curLength += size
         }
         (structs.length, ptr)
       }
