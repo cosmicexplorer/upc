@@ -1,6 +1,6 @@
 package upc.local.virtual_cli
 
-import VirtualIOLayer.Implicits._
+import upc.local.virtual_cli.client.VirtualIOLayer.Implicits._
 
 import ammonite.ops._
 

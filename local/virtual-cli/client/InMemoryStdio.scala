@@ -15,17 +15,34 @@ object InMemoryOutputStreamWrapper {
   def create() = new InMemoryOutputStreamWrapper(new ByteArrayOutputStream())
 }
 
-object InMemoryStdio {
+case class InputStdio(
+  stdout = JavaPrintStream,
+  stderr = JavaPrintStream,
+)
+object InputStdio {
+  def acquire(): InputStdio = InputStdio(
+    stdout = System.out,
+    stderr = System.err)
+}
+
+class InMemoryStdio(input: InputStdio) {
   lazy val stdout = InMemoryOutputStreamWrapper.create()
   lazy val stderr = InMemoryOutputStreamWrapper.create()
 
-  def acquire(): Unit = {
-    System.setOut(stdout)
-    System.setErr(stderr)
+  def collect(): StdioResults = {
+    System.setOut(input.stdout)
+    System.setErr(input.stderr)
+    StdioResults(
+      stdout = stdout.getBytes,
+      stderr = stderr.getBytes,
+    )
   }
-
-  def collect() = StdioResults(
-    stdout = stdout.getBytes,
-    stderr = stderr.getBytes,
-  )
+}
+object InMemoryStdio {
+  def acquire(): InMemoryStdio = {
+    val ret = new InMemoryStdio(InputStdio.acquire())
+    System.setOut(ret.stdout)
+    System.setErr(ret.stderr)
+    ret
+  }
 }

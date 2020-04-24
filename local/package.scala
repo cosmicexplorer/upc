@@ -7,7 +7,6 @@ import scala.util.Try
 
 sealed abstract class EncodingError(message: String) extends IOException(message)
 case class BadDigest(message: String) extends EncodingError(message)
-case class BadSlice(message: String) extends EncodingError(message)
 
 
 case class Digest(fingerprint: Array[Byte], length: Long) {
@@ -41,3 +40,21 @@ object Digest {
 
   def empty: Digest = fromFingerprintHex(EMPTY_FINGERPRINT, 0).get
 }
+
+
+case class DirectoryDigest(digest: Digest)
+
+case class ShmKey(digest: Digest)
+
+case class IOFinalState(
+  vfsDigest: DirectoryDigest,
+  stdout: ShmKey,
+  stderr: ShmKey,
+)
+
+case class ExitCode(code: Int)
+
+case class CompleteVirtualizedProcessResult(
+  exitCode: ExitCode,
+  ioState: IOFinalState,
+)

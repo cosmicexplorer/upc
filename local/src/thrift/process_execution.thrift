@@ -1,7 +1,7 @@
 namespace rs upc.local.thrift_rust.process_execution
-#@namespace scala upc.local.thrift_scala.process_execution
+#@namespace scala upc.local.thriftscala.process_execution
 
-struct FileDigest {
+struct ShmKey {
   1: optional string fingerprint,
   2: optional i64 size_bytes,
 }
@@ -32,8 +32,8 @@ struct VirtualizedExecuteProcessRequest {
 
 struct ExecuteProcessResult {
   1: optional i32 exit_code,
-  2: optional FileDigest stdout,
-  3: optional FileDigest stderr,
+  2: optional ShmKey stdout,
+  3: optional ShmKey stderr,
   4: optional DirectoryDigest output_directory_digest,
   // TODO: zipkin span id!!
 }

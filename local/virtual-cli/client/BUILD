@@ -3,6 +3,7 @@ scala_library(
     '3rdparty/jvm:ammonite-ops',
     '3rdparty/jvm:junixsocket',
     '3rdparty/jvm:nailgun-server',
+    '3rdparty/jvm:finagle-thrift',
     'local',
     'local/src/thrift',
     'local/src/thrift:via-thrift',
@@ -16,6 +17,8 @@ junit_tests(
   name='tests',
   dependencies=[
     '3rdparty/jvm:ammonite-ops',
+    '3rdparty/jvm:scalatest',
+    'local/memory',
     'local/directory',
     'local/directory/testutil',
     ':virtual-cli',

@@ -1,6 +1,6 @@
 package upc.local.virtual_cli.server
 
-import upc.local.thrift_scala.process_execution._
+import upc.local.thriftscala.process_execution._
 
 import com.twitter.finatra.thrift.EmbeddedThriftServer
 import com.twitter.inject.server.FeatureTest

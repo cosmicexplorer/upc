@@ -3,6 +3,7 @@ jvm_binary(
   sources=['ExampleMain.scala'],
   main='upc.local.virtual_cli.ExampleMain',
   dependencies=[
-    ':virtual-cli',
+    '3rdparty/jvm:ammonite-ops',
+    'local/virtual-cli/client',
   ],
 )

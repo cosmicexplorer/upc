@@ -1,6 +1,6 @@
 package upc.local.directory
 
-import upc.local.Digest
+import upc.local._
 import upc.local.memory.{ShmKey, IntoNative, FromNative}
 
 import ammonite.ops._
@@ -20,8 +20,6 @@ sealed abstract class DirectoryUploadError(message: String) extends DirectoryErr
 sealed abstract class ExpandDirectoriesResult
 sealed abstract class UploadDirectoriesResult
 
-
-case class DirectoryDigest(digest: Digest)
 
 case class ChildRelPath(path: RelPath)
 

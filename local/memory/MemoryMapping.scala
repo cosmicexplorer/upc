@@ -48,8 +48,6 @@ class MemoryMapping(val pointer: Pointer) {
 }
 
 
-case class ShmKey(digest: Digest)
-
 case class ShmGetKeyRequest(source: MemoryMapping)
 
 case class ShmAllocateRequest(key: ShmKey, source: MemoryMapping)

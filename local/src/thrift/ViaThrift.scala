@@ -1,33 +1,7 @@
 package upc.local.thrift
 
 import upc.local._
-import upc.local.thrift_scala.process_execution._
-
-
-case class DirectoryDigest(digest: Digest)
-
-case class FileDigest(digest: Digest)
-
-case class MemoryMappedRegionId(id: String)
-
-case class LocalSlice(id: MemoryMappedRegionId, sizeBytes: Long) {
-  if (sizeBytes < 0) {
-    throw BadSlice(s"sizeBytes for local slice with id $id was negative! was: $sizeBytes")
-  }
-}
-
-case class IOFinalState(
-  vfsDigest: DirectoryDigest,
-  stdout: FileDigest,
-  stderr: FileDigest,
-)
-
-case class ExitCode(code: Int)
-
-case class CompleteVirtualizedProcessResult(
-  exitCode: ExitCode,
-  ioState: IOFinalState,
-)
+import upc.local.thriftscala.process_execution._
 
 
 trait ViaThrift[ThriftObject, RealObject] {
@@ -50,55 +24,27 @@ object ViaThrift {
     def fromThrift(thrift: directory.DirectoryDigest): Try[DirectoryDigest] = Try {
       val fingerprint = thrift.getFingerprint
       val sizeBytes = thrift.getSize_bytes
-      DirectoryDigest(Digest(fingerprint, sizeBytes))
+      DirectoryDigest(Digest.fromFingerprintHex(fingerprint, sizeBytes))
     }
     def toThrift(self: DirectoryDigest): directory.DirectoryDigest = {
       val digest = new directory.DirectoryDigest
-      digest.setFingerprint(self.digest.fingerprint)
-      digest.setSize_bytes(self.digest.sizeBytes)
+      digest.setFingerprint(self.digest.fingerprintHex)
+      digest.setSize_bytes(self.digest.length)
       digest
     }
   }
 
-  implicit object FileViaThrift extends ViaThrift[file.FileDigest, FileDigest] {
-    def fromThrift(thrift: file.FileDigest): Try[FileDigest] = Try {
+  implicit object ShmKeyViaThrift extends ViaThrift[file.FileDigest, ShmKey] {
+    def fromThrift(thrift: file.FileDigest): Try[ShmKey] = Try {
       val fingerprint = thrift.getFingerprint
       val sizeBytes = thrift.getSize_bytes
-      FileDigest(Digest(fingerprint, sizeBytes))
+      ShmKey(Digest.fromFingerprintHex(fingerprint, sizeBytes))
     }
-    def toThrift(self: FileDigest): file.FileDigest = {
+    def toThrift(self: ShmKey): file.FileDigest = {
       val digest = new file.FileDigest
-      digest.setFingerprint(self.digest.fingerprint)
-      digest.setSize_bytes(self.digest.sizeBytes)
+      digest.setFingerprint(self.digest.fingerprintHex)
+      digest.setSize_bytes(self.digest.length)
       digest
-    }
-  }
-
-  implicit object MemoryMappedRegionIdViaThrift extends ViaThrift[
-    file.MemoryMappedRegionId,
-    MemoryMappedRegionId,
-  ] {
-    def fromThrift(thrift: file.MemoryMappedRegionId): Try[MemoryMappedRegionId] = Try {
-      MemoryMappedRegionId(thrift.getId)
-    }
-    def toThrift(self: MemoryMappedRegionId): file.MemoryMappedRegionId = {
-      val id = new file.MemoryMappedRegionId
-      id.setId(self.id)
-      id
-    }
-  }
-
-  implicit object LocalSliceViaThrift extends ViaThrift[file.LocalSlice, LocalSlice] {
-    def fromThrift(thrift: file.LocalSlice): Try[LocalSlice] = Try {
-      val id: MemoryMappedRegionId = thrift.getId.fromThrift().get
-      val sizeBytes: Long = thrift.getSize_bytes
-      LocalSlice(id, sizeBytes)
-    }
-    def toThrift(self: LocalSlice): file.LocalSlice = {
-      val localSlice = new file.LocalSlice
-      localSlice.setId(self.id.toThrift)
-      localSlice.setSize_bytes(self.sizeBytes)
-      localSlice
     }
   }
 
