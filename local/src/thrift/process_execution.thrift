@@ -1,5 +1,5 @@
 namespace rs upc.local.thrift_rust.process_execution
-namespace java upc.local.thrift_java.process_execution
+#@namespace scala upc.local.thrift_scala.process_execution
 
 struct FileDigest {
   1: optional string fingerprint,
@@ -51,12 +51,6 @@ exception ProcessExecutionError {
 service ProcessExecutionService {
   ExecuteProcessResult executeProcesses(1: VirtualizedExecuteProcessRequest execute_process_request)
     throws (1: ProcessExecutionError process_execution_error)
-}
 
-// This is what the VirtualCLI subprocesses interact with to signal that they have exited!
-// Note: This /could/ be merged into the ProcessExecutionService above, but the clients of process
-// execution (build tools) vs process reaping (subprocesses like compilers) are so different that it
-// seems to make sense to separate them here.
-service ProcessReapService {
   void reapProcess(1: ExecuteProcessResult process_result)
 }
