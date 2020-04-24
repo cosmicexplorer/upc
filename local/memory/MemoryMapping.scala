@@ -1,6 +1,6 @@
 package upc.local.memory
 
-import _root_.jnr.ffi._
+import jnr.ffi._
 
 import javax.xml.bind.DatatypeConverter
 import scala.util.Try
