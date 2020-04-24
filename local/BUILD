@@ -1,5 +1,1 @@
-scala_library(
-  dependencies=[
-    'local/src/thrift',
-  ],
-)
+scala_library()

@@ -8,6 +8,7 @@ scala_library(
     '3rdparty/jvm:ammonite-ops',
     '3rdparty/jvm:jnr-ffi',
     ':enums',
+    'local',
     'local/memory',
   ],
 )

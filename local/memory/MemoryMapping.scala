@@ -1,8 +1,9 @@
 package upc.local.memory
 
+import upc.local._
+
 import jnr.ffi._
 
-import javax.xml.bind.DatatypeConverter
 import scala.util.Try
 
 
@@ -47,38 +48,11 @@ class MemoryMapping(val pointer: Pointer) {
 }
 
 
-case class ShmKey(fingerprint: Array[Byte], length: Long) {
-  if (fingerprint.length != 32) {
-    throw ShmNativeObjectEncodingError(s"invalid fingerprint: must be 32 bytes (was: $fingerprint)")
-  }
-  if (length < 0) {
-    throw ShmNativeObjectEncodingError(s"invalid ShmKey: length must be non-negative (was: $this)")
-  }
-
-  lazy val fingerprintHex: String = DatatypeConverter.printHexBinary(fingerprint).toLowerCase
-
-  override def equals(other: Any): Boolean = {
-    Option(other.asInstanceOf[ShmKey]) match {
-      case None => false
-      case Some(ShmKey(fp, len)) => fingerprint.zip(fp).map { case (fp1, fp2) => fp1 == fp2 }
-          .fold(true) { case (acc, cur) => acc && cur }
-    }
-  }
-
-  override def toString: String = {
-    s"ShmKey(length=$length, fingerprint=$fingerprintHex)"
-  }
-}
-object ShmKey {
-  def fromFingerprintHex(hex: String, length: Long): Try[ShmKey] = Try(ShmKey(
-    fingerprint = DatatypeConverter.parseHexBinary(hex),
-    length = length))
-}
+case class ShmKey(digest: Digest)
 
 case class ShmGetKeyRequest(source: MemoryMapping)
 
 case class ShmAllocateRequest(key: ShmKey, source: MemoryMapping)
-
 sealed abstract class ShmAllocateResult
 case class AllocationSucceeded(key: ShmKey, source: MemoryMapping) extends ShmAllocateResult
 case class DigestDidNotMatch(key: ShmKey) extends ShmAllocationError(
@@ -115,7 +89,7 @@ object IntoNative {
 
   implicit object ShmKeyIntoNative extends IntoNative[ShmKey, LibMemory.ShmKey] {
     def intoNative(jvm: ShmKey): Try[LibMemory.ShmKey] = Try(
-      LibMemory.ShmKey(jvm.length, jvm.fingerprint))
+      LibMemory.ShmKey(jvm.digest.length, jvm.digest.fingerprint))
   }
 
   implicit object MemoryMappingIntoNative extends IntoNative[MemoryMapping, Pointer] {
@@ -165,10 +139,10 @@ object FromNative {
 
   implicit object ShmKeyFromNative
       extends FromNative[ShmKey, LibMemory.ShmKey] {
-    def fromNative(native: LibMemory.ShmKey): Try[ShmKey] = Try(ShmKey(
+    def fromNative(native: LibMemory.ShmKey): Try[ShmKey] = Try(ShmKey(Digest(
       fingerprint = native.getFingerprintBytes,
       length = native.getSize,
-    ))
+    )))
   }
 
   implicit object MemoryMappingFromNative

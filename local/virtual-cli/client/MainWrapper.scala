@@ -1,6 +1,6 @@
 package upc.local.virtual_cli.client
 
-import upc.local.ExitCode
+import upc.local.{Digest, ExitCode}
 import upc.local.directory
 import upc.local.memory
 import upc.local.thrift_java.process_execution.{ExecuteProcessResult, ProcessReapService}
@@ -187,7 +187,8 @@ trait MainWrapper extends VirtualizationImplementation {
   def getIOInitializationConfig(): Try[directory.DirectoryDigest] = Try {
     val fingerprintHex = sys.env(VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR)
     val sizeBytes = sys.env(VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR).toLong
-    memory.ShmKey.fromFingerprintHex(fingerprintHex, sizeBytes)
+    val digest = Digest.fromFingerprintHex(fingerprintHex, sizeBytes)
+    directory.DirectoryDigest(key)
   }
 
   override def acquireIOServicesConfig(): Try[IOServicesConfig] = for {

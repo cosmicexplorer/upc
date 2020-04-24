@@ -1,8 +1,9 @@
 package upc.local.virtual_cli.client
 
 // import upc.local.{Digest, DirectoryDigest, ExitCode, FileDigest, IOFinalState, CompleteVirtualizedProcessResult}
-import upc.local
-import upc.local.ViaThrift._
+import upc.local.Digest
+import upc.local.thrift
+import upc.local.thrift.ViaThrift._
 import upc.local.directory
 import upc.local.memory
 import upc.local.thrift_java.process_execution
@@ -39,13 +40,44 @@ class IOServicesConfig(
 }
 
 
+sealed abstract class IOServicesError(message: String) extends Exception(message)
+case class InitialFileMappingFailed(message: String) extends IOServicesError(message)
+
+
 class IOServices(config: IOServicesConfig) extends AsyncCloseable {
   val IOServiceClients(processReapClient) = config.getClients()
   implicit val executor: ExecutionContext = config.executor
 
-  def readFileMapping(): Future[FileMapping] = ???
+  def readFileMapping(): Future[FileMapping] = Future { blocking {
+    val req = directory.ExpandDirectoriesRequest(Seq(config.initialDigest))
 
-  private def writeIOState(
+    val mapping = directory.DirectoryMapping.expand(req).get match {
+      case directory.ExpandSucceeded(directory.ExpandDirectoriesMapping(mapping)) => mapping
+    }
+    if (mapping.size != 1) {
+      throw InitialFileMappingFailed(s"initial mapping $mapping returned more than one digest!")
+    }
+
+    val (digest, pathStats) = mapping.toSeq.apply(0)
+    if (digest != config.initialDigest) {
+      throw InitialFileMappingFailed(
+        s"returned digest $digest from attempted initial mapping did not match argument ${config.initialDigest}!")
+    }
+
+    FileMapping.fromPathStats(pathStats)
+  }}
+
+  def uploadBytes(bytes: Array[Byte]): Future[FileDigest] = Future { blocking {
+    val inputMapping = memory.MemoryMapping.fromArray(bytes)
+    val key = memory.Shm.getKey(memory.ShmGetKeyRequest(mapping)).get
+    val allocateRequest = memory.ShmAllocateRequest(key, inputMapping)
+    val outputMapping = memory.Shm.allocate(allocateRequest).get match {
+      memory.AllocationSucceeded(_, _) => mapping
+    }
+
+  }}
+
+  def writeIOState(
     fileMapping: FileMapping,
     stdioResults: StdioResults,
   ): Future[IOFinalState] = {

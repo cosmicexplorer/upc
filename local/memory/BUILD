@@ -7,6 +7,7 @@ scala_library(
   dependencies=[
     '3rdparty/jvm:jnr-ffi',
     ':enums',
+    'local',
   ],
 )
 

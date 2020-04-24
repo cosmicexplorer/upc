@@ -5,6 +5,7 @@ scala_library(
     '3rdparty/jvm:nailgun-server',
     'local',
     'local/src/thrift',
+    'local/src/thrift:via-thrift',
     'local/directory',
     'local/memory',
     'local/virtual-cli/util',

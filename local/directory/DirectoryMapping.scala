@@ -1,5 +1,6 @@
 package upc.local.directory
 
+import upc.local.Digest
 import upc.local.memory.{ShmKey, IntoNative, FromNative}
 
 import ammonite.ops._
@@ -20,7 +21,7 @@ sealed abstract class ExpandDirectoriesResult
 sealed abstract class UploadDirectoriesResult
 
 
-case class DirectoryDigest(key: ShmKey)
+case class DirectoryDigest(digest: Digest)
 
 case class ChildRelPath(path: RelPath)
 
@@ -47,7 +48,7 @@ object DirectoryMappingIntoNative {
   implicit object DirectoryDigestIntoNative
       extends IntoNative[DirectoryDigest, LibDirectory.DirectoryDigest] {
     def intoNative(jvm: DirectoryDigest): Try[LibDirectory.DirectoryDigest] = Try(
-      LibDirectory.DirectoryDigest(jvm.key.intoNative().get))
+      LibDirectory.DirectoryDigest(ShmKey(jvm.digest).intoNative().get))
   }
 
   implicit object ChildRelPathIntoNative
@@ -98,7 +99,7 @@ object DirectoryMappingFromNative {
   implicit object DirectoryDigestFromNative
       extends FromNative[DirectoryDigest, LibDirectory.DirectoryDigest] {
     def fromNative(native: LibDirectory.DirectoryDigest): Try[DirectoryDigest] = Try(
-      DirectoryDigest(ShmKey(
+      DirectoryDigest(Digest(
         fingerprint = native.getFingerprintBytes,
         length = native.getSize,
       )))
@@ -116,10 +117,10 @@ object DirectoryMappingFromNative {
       extends FromNative[FileStat, LibDirectory.FileStat] {
     def fromNative(native: LibDirectory.FileStat): Try[FileStat] = Try {
       FileStat(
-        key = ShmKey(
+        key = ShmKey(Digest(
           fingerprint = native.getFingerprintBytes,
           length = native.getSize,
-        ),
+        )),
         path = ChildRelPath(relpathFromBytes(native.getPathBytes)),
       )
     }

@@ -1,14 +1,11 @@
 package upc.local.directory
 
-import upc.local.memory._
 import upc.local.directory.testutil.TestUtil
 
 import ammonite.ops._
 import org.junit.runner.RunWith
 import org.scalatest._
 import org.scalatest.junit.JUnitRunner
-
-import scala.util.Try
 
 
 @RunWith(classOf[JUnitRunner])
