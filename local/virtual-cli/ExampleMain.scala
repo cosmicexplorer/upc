@@ -6,7 +6,7 @@ import ammonite.ops._
 
 
 object ExampleMain extends MainWrapper {
-  override def virtualizedMainMethod(args: Array[String], cwd: Path): Int = {
+  override def virtualizedMainMethod(args: Array[String]): Int = {
     System.out.println("asdf")
     0
   }

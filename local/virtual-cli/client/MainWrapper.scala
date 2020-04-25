@@ -1,29 +1,27 @@
 package upc.local.virtual_cli.client
 
 import upc.local._
-import upc.local.directory
-import upc.local.memory
 import upc.local.thrift.ViaThrift._
-import upc.local.thriftscala.process_execution._
+import upc.local.thriftscala.{process_execution => thriftscala}
 
 import ammonite.ops._
 import com.martiansoftware.nailgun.NGContext
-import com.twitter.finagle.thrift.ThriftRichClient
-import com.twitter.util.{Await => TwitterAwait}
+import com.twitter.finagle.Thrift
 
-import java.io.{PrintStream => JavaPrintStream, IOException, File => JavaFile}
 import java.util.concurrent.Executors
 import scala.concurrent.{blocking, Await, ExecutionContext, Future}
 import scala.concurrent.duration.Duration
-import scala.util.{Try, Success, Failure}
+import scala.util.Try
 
 
 trait VirtualizationImplementation {
-  def virtualizedMainMethod(args: Array[String], cwd: Path): Int
+  def virtualizedMainMethod(args: Array[String]): Int
 
   def acquireIOServicesConfig(): Try[IOServicesConfig]
 
-  def withVirtualIOLayer(runMainMethod: => Int): Future[CompleteVirtualizedProcessResult] = {
+  def withVirtualIOLayer(
+    cwd: Path,
+  )(runMainMethod: => Int): Future[CompleteVirtualizedProcessResult] = {
     // Acquire stdio.
     val inMemStdio = InMemoryStdio.acquire()
 
@@ -31,7 +29,7 @@ trait VirtualizationImplementation {
     implicit val executor = ioConfig.executor
 
     for {
-      () <- VirtualIOLayer.setUp(ioConfig)
+      () <- VirtualIOLayer.setUp(IOLayerConfig(cwd, ioConfig))
       exitCode <- Future { blocking { runMainMethod } }.map(ExitCode(_))
       // Dump stdio.
       stdioResults = inMemStdio.collect()
@@ -40,7 +38,7 @@ trait VirtualizationImplementation {
   }
 
   def mainWrapper(args: Array[String], cwd: Path): Future[CompleteVirtualizedProcessResult] =
-    withVirtualIOLayer { virtualizedMainMethod(args, cwd) }
+    withVirtualIOLayer(cwd) { virtualizedMainMethod(args) }
 }
 
 
@@ -68,11 +66,11 @@ trait MainWrapper extends VirtualizationImplementation {
     ExecutionContext.fromExecutorService(pool)
   }
 
-  lazy val initialDigest: directory.DirectoryDigest = {
+  lazy val initialDigest: DirectoryDigest = {
     val fingerprintHex = sys.env(VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR)
     val sizeBytes = sys.env(VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR).toLong
-    val digest = Digest.fromFingerprintHex(fingerprintHex, sizeBytes)
-    directory.DirectoryDigest(key)
+    val digest = Digest.fromFingerprintHex(fingerprintHex, sizeBytes).get
+    DirectoryDigest(digest)
   }
 
   override def acquireIOServicesConfig(): Try[IOServicesConfig] = Try(
@@ -83,10 +81,12 @@ trait MainWrapper extends VirtualizationImplementation {
 
   def withProcessReapClient(f: => Future[CompleteVirtualizedProcessResult]): Try[ExitCode] = Try {
     val processReapServicePort = sys.env(PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR).toInt
-    val client = ThriftRichClient.build[ProcessExecutionService](processReapServicePort.toString)
+    val client = Thrift.Client().build[
+      thriftscala.ProcessExecutionService[Future]
+    ](processReapServicePort.toString)
 
     val result = Await.result(f, Duration.Inf)
-    val () = TwitterAwait.result(client.reapProcess(result.toThrift))
+    val () = Await.result(client.reapProcess(result.toThrift), Duration.Inf)
     result.exitCode
   }
 

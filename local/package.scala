@@ -42,6 +42,12 @@ object Digest {
 }
 
 
+case class PathGlobs(
+  include: Seq[String],
+  exclude: Seq[String],
+)
+
+
 case class DirectoryDigest(digest: Digest)
 
 case class ShmKey(digest: Digest)

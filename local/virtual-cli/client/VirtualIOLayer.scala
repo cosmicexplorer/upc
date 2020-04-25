@@ -1,16 +1,11 @@
 package upc.local.virtual_cli.client
 
 import upc.local._
-import upc.local.directory
-import upc.local.memory
 
 import ammonite.ops._
 
-import java.io.{PrintStream => JavaPrintStream, IOException, File => JavaFile}
-import scala.concurrent.{blocking, Await, ExecutionContext, Future}
-import scala.concurrent.duration.Duration
-
-import scala.util.{Try, Success, Failure}
+import java.io.IOException
+import scala.concurrent.{ExecutionContext, Future}
 
 
 sealed abstract class VirtualIOError(message: String, cause: Throwable = null)
@@ -22,7 +17,8 @@ case class ExecutionContextCreationError(message: String, cause: Throwable = nul
 case class LazyRefCellBadAcquisitionState(message: String) extends VirtualIOError(message)
 
 
-class VFSImpl(val fileMapping: FileMapping) extends DescriptorTrackingVFS(fileMapping)
+class VFSImpl(cwd: Path, val fileMapping: FileMapping)
+    extends DescriptorTrackingVFS(cwd, fileMapping)
     with VFSImplicits
 
 
@@ -39,8 +35,6 @@ case class VirtualizedProcessExit(
 
 class VirtualIOAdaptor(ioServices: IOServices, val vfs: VFSImpl)
     extends Exitable[VirtualizedProcessExit, CompleteVirtualizedProcessResult] {
-  import ioServices.executor
-
   val Implicits = vfs.VFSImplicitDefs
 
   override def exit(res: VirtualizedProcessExit): Future[CompleteVirtualizedProcessResult] = {
@@ -49,11 +43,11 @@ class VirtualIOAdaptor(ioServices: IOServices, val vfs: VFSImpl)
   }
 }
 object VirtualIOAdaptor {
-  def apply(config: IOServicesConfig): Future[VirtualIOAdaptor] = {
-    import config.executor
+  def apply(cwd: Path, config: IOServicesConfig): Future[VirtualIOAdaptor] = {
+    implicit val executor = config.executor
 
-    val ioServices = new IOServices(config)
-    val vfs = ioServices.readFileMapping().map(new VFSImpl(_))
+    val ioServices = new IOServices(cwd, config)
+    val vfs = ioServices.readFileMapping().map(new VFSImpl(cwd, _))
     vfs.map(new VirtualIOAdaptor(ioServices, _))
   }
 }
@@ -78,8 +72,13 @@ trait Setupable[RequestType] {
   def setUp(request: RequestType): Future[Unit]
 }
 
+case class IOLayerConfig(
+  cwd: Path,
+  ioServices: IOServicesConfig,
+)
+
 class VirtualIOLayer
-    extends Setupable[IOServicesConfig]
+    extends Setupable[IOLayerConfig]
     with Exitable[VirtualizedProcessExit, CompleteVirtualizedProcessResult] {
 
   private val executorCell: LazyRefCell[ExecutionContext] = LazyRefCell.empty
@@ -95,10 +94,12 @@ class VirtualIOLayer
   lazy val virtualIOAdaptor: VirtualIOAdaptor = virtualIOAdaptorCell.stableObject
   lazy val Implicits = virtualIOAdaptor.Implicits
 
-  override def setUp(config: IOServicesConfig): Future[Unit] = {
+  override def setUp(ioLayerConfig: IOLayerConfig): Future[Unit] = {
+    val IOLayerConfig(cwd, config) = ioLayerConfig
+
     initializeExecutor(config.executor)
 
-    VirtualIOAdaptor(config)
+    VirtualIOAdaptor(cwd, config)
       .map(initializeVirtualIOAdaptor(_))
   }
 

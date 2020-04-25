@@ -3,8 +3,6 @@ package upc.local.virtual_cli.client
 import upc.local._
 import upc.local.memory._
 
-import VirtualIOLayer.Implicits._
-
 import ammonite.ops._
 import org.junit.runner.RunWith
 import org.scalatest._
@@ -24,7 +22,9 @@ object ExampleMain extends VirtualizationImplementation {
     executor = global,
   ))
 
-  override def virtualizedMainMethod(args: Array[String], cwd: Path): Int = {
+  override def virtualizedMainMethod(args: Array[String]): Int = {
+    import VirtualIOLayer.Implicits._
+
     System.out.println(stdoutOutput)
     0
   }
@@ -34,11 +34,17 @@ object ExampleMain extends VirtualizationImplementation {
 @RunWith(classOf[JUnitRunner])
 class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   "The ExampleMain object" should "successfully virtualize its execution" in {
-    val result = Await.result(ExampleMain.mainWrapper(Array(), Path(".")), Duration.Inf)
+    val CompleteVirtualizedProcessResult(
+      ExitCode(exitCode),
+      IOFinalState(digest, stdout, stderr)
+    ) = Await.result(ExampleMain.mainWrapper(Array(), pwd), Duration.Inf)
+    exitCode should be (0)
+    digest should === (DirectoryDigest(Digest.empty))
+    stderr should === (ShmKey(Digest.empty))
+
     val knownOutput = (ExampleMain.stdoutOutput + "\n").getBytes
     val mapping = MemoryMapping.fromArray(knownOutput)
     val key = Shm.getKey(ShmGetKeyRequest(mapping)).get
-    result.stdout should === (key)
-    result.stderr should === (ShmKey(Digest.empty))
+    stdout should === (key)
   }
 }

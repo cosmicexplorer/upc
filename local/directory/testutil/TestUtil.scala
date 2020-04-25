@@ -1,5 +1,6 @@
 package upc.local.directory.testutil
 
+import upc.local._
 import upc.local.memory._
 
 import scala.util.Try

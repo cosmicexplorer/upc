@@ -1,5 +1,6 @@
 package upc.local.virtual_cli.client
 
+import upc.local._
 import upc.local.memory.MemoryMapping
 
 import ammonite.ops._
@@ -25,18 +26,18 @@ trait VFS {
   def updateFileContents(path: PathType, file: FileType): Unit
   def asReadableFile(descriptor: FileDescriptorType): Readable
   def asWritableFile(descriptor: FileDescriptorType): Writable
-  def scanDir(path: PathType): Try[DirectoryType]
-  def mkdir(path: PathType): Try[DirectoryType]
+  def expandGlobs(globs: GlobsType): Try[Seq[PathType]]
 
-  def currentFileMapping: FileMapping
+  def cwd: PathType
+
+  def currentFileMapping: FileMappingType
 
   type Error <: VFSError
   type PathType
   type FileDescriptorType
-  type EntryType
   type FileType <: FileContent
-  type RelPathType
-  type DirectoryType <: MutableChildren[RelPathType, EntryType]
+  type GlobsType
+  type FileMappingType
 }
 
 
@@ -63,14 +64,18 @@ trait VFSImplicits { self: VFS =>
 }
 
 
-class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
+class DescriptorTrackingVFS(_cwd: Path, fileMapping: FileMapping) extends VFS {
   type Error = VFSError
   type PathType = Path
   type FileDescriptorType = OpenedFile
-  type EntryType = DirEntry
   type FileType = File
   type RelPathType = RelPath
-  type DirectoryType = Directory
+  type GlobsType = PathGlobs
+  type FileMappingType = FileMapping
+
+  override def cwd: Path = _cwd
+
+  override def currentFileMapping: FileMapping = fileMapping
 
   val openedPathMapping: mutable.Map[OpenedFile, Path] = mutable.Map.empty
   val fdMapping: mutable.Map[OpenedFile, File] = mutable.Map.empty
@@ -101,21 +106,10 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
   override def asWritableFile(openedFile: OpenedFile): Writable =
     new WritableFile(newHandle(openedFile))
 
-  override def scanDir(path: Path): Try[Directory] = Try {
-    fileMapping.get(path) match {
-      case None => throw LocationFailed(s"failed to locate path $path")
-      case Some(x: Directory) => x
-      case Some(x) => throw WrongEntryType(s"result $x was not a directory")
-    }
-  }
-  override def mkdir(path: Path): Try[Directory] = Try {
-    ???
-  }
-
-  override def currentFileMapping: FileMapping = fileMapping
+  override def expandGlobs(globs: PathGlobs): Try[Seq[Path]] = Try { ??? }
 
   def readAll(openedFile: OpenedFile): Array[Byte] = this.synchronized {
-    getFile(openedFile).contentCopy
+    getFile(openedFile).content
   }
   def readBytesAt(openedFile: OpenedFile, output: Array[Byte]): Int = this.synchronized {
     getFile(openedFile).readFrom(getSeek(openedFile), output)
@@ -129,6 +123,11 @@ class DescriptorTrackingVFS(fileMapping: FileMapping) extends VFS {
     openedPathMapping -= openedFile
     fdMapping -= openedFile
     fdSeekPositions -= openedFile
+  }
+
+  def flushWriteFile(openedFile: OpenedFile, newFile: File): Unit = this.synchronized {
+    val prevPath = getPath(openedFile)
+    updateFileContents(prevPath, newFile)
   }
 
   def closeWriteFile(openedFile: OpenedFile, newFile: File): Unit = this.synchronized {
@@ -146,6 +145,8 @@ class FileHandle(openedFile: OpenedFile, vfs: DescriptorTrackingVFS) {
 
   def readBytesAt(output: Array[Byte]): Int = vfs.readBytesAt(openedFile, output)
   def readAll(): Array[Byte] = vfs.readAll(openedFile)
+
+  def flushForWrite(newFile: File): Unit = vfs.flushWriteFile(openedFile, newFile)
 
   def closeForRead(): Unit = vfs.closeFile(openedFile)
   def closeForWrite(newFile: File): Unit = vfs.closeWriteFile(openedFile, newFile)
@@ -166,5 +167,9 @@ class WritableFile(handle: FileHandle) extends Writable with Closeable {
 
   override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
 
-  override def close(): Unit = handle.closeForWrite(File(MemoryMapping.fromArray(sink.toByteArray)))
+  private def asNewFile = File(MemoryMapping.fromArray(sink.toByteArray))
+
+  override def flush(): Unit = handle.flushForWrite(asNewFile)
+
+  override def close(): Unit = handle.closeForWrite(asNewFile)
 }

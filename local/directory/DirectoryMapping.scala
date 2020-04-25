@@ -1,7 +1,7 @@
 package upc.local.directory
 
 import upc.local._
-import upc.local.memory.{ShmKey, IntoNative, FromNative}
+import upc.local.memory.{IntoNative, FromNative}
 
 import ammonite.ops._
 

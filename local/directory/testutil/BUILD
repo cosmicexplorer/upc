@@ -1,6 +1,6 @@
 scala_library(
   dependencies=[
-    'local/directory',
+    'local',
     'local/memory',
   ]
 )

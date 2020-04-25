@@ -21,6 +21,6 @@ junit_tests(
     'local/memory',
     'local/directory',
     'local/directory/testutil',
-    ':virtual-cli',
+    ':client',
   ],
 )

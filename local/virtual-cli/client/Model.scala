@@ -1,7 +1,7 @@
 package upc.local.virtual_cli.client
 
-import upc.local.directory
-import upc.local.memory
+import upc.local.directory._
+import upc.local.memory._
 
 import ammonite.ops._
 
@@ -50,7 +50,7 @@ trait Writable extends JavaOutputStream {
 
 
 trait FileContent {
-  def contentCopy: Array[Byte]
+  def content: Array[Byte]
   def readFrom(offset: Long, output: Array[Byte]): Int
 }
 
@@ -58,28 +58,51 @@ trait MutableChildren[PathType, EntryType] {
   def children: mutable.Map[PathType, EntryType]
 }
 
-sealed abstract class DirEntry
-
-case class File(bytes: memory.MemoryMapping) extends DirEntry
-    with FileContent {
-  override def contentCopy: Array[Byte] = bytes.getBytesCopy
+case class File(bytes: MemoryMapping) extends FileContent {
+  override lazy val content: Array[Byte] = bytes.getBytes
 
   override def readFrom(offset: Long, output: Array[Byte]): Int = bytes.readBytesAt(offset, output)
 }
 
-case class Directory(childrenMap: mutable.Map[RelPath, DirEntry]) extends DirEntry
-    with MutableChildren[RelPath, DirEntry] {
-  override def children: mutable.Map[RelPath, DirEntry] = childrenMap
-}
-
-class FileMapping(val allTrackedPaths: mutable.Map[Path, DirEntry]) {
-  def get(path: Path): Option[DirEntry] = this.synchronized { allTrackedPaths.get(path) }
+class FileMapping(allTrackedPaths: mutable.Map[Path, File]) {
+  def get(path: Path): Option[File] = this.synchronized { allTrackedPaths.get(path) }
   def update(path: Path, file: File): Unit = this.synchronized {
     allTrackedPaths(path) = file
   }
 
-  def intoPathStats: directory.PathStats = ???
+  def intoPathStats(cwd: Path): Try[PathStats] = Try {
+    val paths: Seq[(Path, File)] = allTrackedPaths.toSeq
+    val fileStats = paths.map {
+      case (path, file) => {
+        val File(mapping) = file
+        val relPath = path.relativeTo(cwd)
+        val key = Shm.getKey(ShmGetKeyRequest(mapping)).get
+        val () = Shm.allocate(ShmAllocateRequest(key, mapping)).get match {
+          case AllocationSucceeded(_key, _mapping) => ()
+        }
+        FileStat(key, ChildRelPath(relPath))
+      }
+    }
+    PathStats(fileStats)
+  }
 }
 object FileMapping {
-  def fromPathStats(pathStats: directory.PathStats): FileMapping = ???
+  def fromPathStats(cwd: Path, pathStats: PathStats): Try[FileMapping] = Try {
+    val PathStats(fileStats) = pathStats
+    val paths: Seq[(Path, File)] = fileStats.map {
+      case FileStat(key, ChildRelPath(path)) => {
+        val file = Shm.retrieve(ShmRetrieveRequest(key)).get match {
+          case RetrieveSucceeded(_key, mapping) => File(mapping)
+        }
+        ((cwd / path) -> file)
+      }
+    }
+    val map: mutable.Map[Path, File] = mutable.Map.empty
+    paths.foreach {
+      case (path, file) => {
+        map(path) = file
+      }
+    }
+    new FileMapping(map)
+  }
 }

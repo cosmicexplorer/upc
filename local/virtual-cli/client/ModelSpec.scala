@@ -1,9 +1,7 @@
 package upc.local.virtual_cli.client
 
-import upc.local.memory._
 import upc.local.directory._
 import upc.local.directory.testutil.TestUtil
-import upc.local.virtual_cli._
 
 import ammonite.ops._
 import org.junit.runner.RunWith
@@ -27,9 +25,9 @@ class ModelSpec extends FlatSpec with Matchers {
     )
     val pathStats = PathStats(fileStats)
 
-    val fileMapping = FileMapping.fromPathStats(pathStats)
+    val fileMapping = FileMapping.fromPathStats(pwd, pathStats).get
 
-    val retPathStats = fileMapping.intoPathStats
+    val retPathStats = fileMapping.intoPathStats(pwd).get
 
     pathStats should === (retPathStats)
   }

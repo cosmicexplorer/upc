@@ -1,7 +1,9 @@
 package upc.local.thrift
 
 import upc.local._
-import upc.local.thriftscala.process_execution._
+import upc.local.thriftscala.{process_execution => thriftscala}
+
+import scala.util.Try
 
 
 trait ViaThrift[ThriftObject, RealObject] {
@@ -20,61 +22,62 @@ object ViaThrift {
     def toThrift: ThriftObject = viaThrift.toThrift(real)
   }
 
-  implicit object DirectoryViaThrift extends ViaThrift[directory.DirectoryDigest, DirectoryDigest] {
-    def fromThrift(thrift: directory.DirectoryDigest): Try[DirectoryDigest] = Try {
-      val fingerprint = thrift.getFingerprint
-      val sizeBytes = thrift.getSize_bytes
-      DirectoryDigest(Digest.fromFingerprintHex(fingerprint, sizeBytes))
+  implicit object DirectoryViaThrift
+      extends ViaThrift[thriftscala.DirectoryDigest, DirectoryDigest] {
+    def fromThrift(thrift: thriftscala.DirectoryDigest): Try[DirectoryDigest] = Try {
+      val thriftscala.DirectoryDigest(Some(fingerprint), Some(sizeBytes)) = thrift
+      DirectoryDigest(Digest.fromFingerprintHex(fingerprint, sizeBytes).get)
     }
-    def toThrift(self: DirectoryDigest): directory.DirectoryDigest = {
-      val digest = new directory.DirectoryDigest
-      digest.setFingerprint(self.digest.fingerprintHex)
-      digest.setSize_bytes(self.digest.length)
-      digest
-    }
+    def toThrift(self: DirectoryDigest) = thriftscala.DirectoryDigest(
+      fingerprint = Some(self.digest.fingerprintHex),
+      sizeBytes = Some(self.digest.length),
+    )
   }
 
-  implicit object ShmKeyViaThrift extends ViaThrift[file.FileDigest, ShmKey] {
-    def fromThrift(thrift: file.FileDigest): Try[ShmKey] = Try {
-      val fingerprint = thrift.getFingerprint
-      val sizeBytes = thrift.getSize_bytes
-      ShmKey(Digest.fromFingerprintHex(fingerprint, sizeBytes))
+  implicit object ShmKeyViaThrift extends ViaThrift[thriftscala.ShmKey, ShmKey] {
+    def fromThrift(thrift: thriftscala.ShmKey): Try[ShmKey] = Try {
+      val thriftscala.ShmKey(Some(fingerprint), Some(sizeBytes)) = thrift
+      ShmKey(Digest.fromFingerprintHex(fingerprint, sizeBytes).get)
     }
-    def toThrift(self: ShmKey): file.FileDigest = {
-      val digest = new file.FileDigest
-      digest.setFingerprint(self.digest.fingerprintHex)
-      digest.setSize_bytes(self.digest.length)
-      digest
-    }
+    def toThrift(self: ShmKey) = thriftscala.ShmKey(
+      fingerprint = Some(self.digest.fingerprintHex),
+      sizeBytes = Some(self.digest.length),
+    )
   }
 
   implicit object ProcessResultViaThrift extends ViaThrift[
-    process_execution.ExecuteProcessResult,
+    thriftscala.ExecuteProcessResult,
     CompleteVirtualizedProcessResult,
   ] {
     def fromThrift(
-      thrift: process_execution.ExecuteProcessResult,
+      thrift: thriftscala.ExecuteProcessResult,
     ): Try[CompleteVirtualizedProcessResult] = Try {
-      val exitCode = ExitCode(thrift.getExit_code)
-      val stdout = thrift.getStdout.fromThrift().get
-      val stderr = thrift.getStderr.fromThrift().get
-      val digest = thrift.getOutput_directory_digest.fromThrift().get
+      val thriftscala.ExecuteProcessResult(
+        Some(exitCode),
+        Some(stdout),
+        Some(stderr),
+        Some(digest),
+      ) = thrift
       CompleteVirtualizedProcessResult(
-        exitCode = exitCode,
+        exitCode = ExitCode(exitCode),
         ioState = IOFinalState(
-          vfsDigest = digest,
-          stdout = stdout,
-          stderr = stderr,
+          vfsDigest = digest.fromThrift().get,
+          stdout = stdout.fromThrift().get,
+          stderr = stderr.fromThrift().get,
         ),
       )
     }
-    def toThrift(self: CompleteVirtualizedProcessResult): process_execution.ExecuteProcessResult = {
-      val result = new process_execution.ExecuteProcessResult
-      result.setExit_code(self.exitCode.code)
-      result.setStdout(self.ioState.stdout.toThrift)
-      result.setStderr(self.ioState.stderr.toThrift)
-      result.setOutput_directory_digest(self.ioState.vfsDigest.toThrift)
-      result
+    def toThrift(self: CompleteVirtualizedProcessResult): thriftscala.ExecuteProcessResult = {
+      val CompleteVirtualizedProcessResult(
+        ExitCode(exitCode),
+        IOFinalState(digest, stdout, stderr),
+      ) = self
+      thriftscala.ExecuteProcessResult(
+        exitCode = Some(exitCode),
+        stdout = Some(stdout.toThrift),
+        stderr = Some(stderr.toThrift),
+        outputDirectoryDigest = Some(digest.toThrift)
+      )
     }
   }
 }

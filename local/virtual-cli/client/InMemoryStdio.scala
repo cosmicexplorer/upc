@@ -16,8 +16,8 @@ object InMemoryOutputStreamWrapper {
 }
 
 case class InputStdio(
-  stdout = JavaPrintStream,
-  stderr = JavaPrintStream,
+  stdout: JavaPrintStream,
+  stderr: JavaPrintStream,
 )
 object InputStdio {
   def acquire(): InputStdio = InputStdio(
