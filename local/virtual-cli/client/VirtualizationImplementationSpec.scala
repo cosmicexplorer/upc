@@ -119,6 +119,8 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   }
 
   it should "successfully modify the contents of an existing file" in {
+    // FIXME: this fails when trying to upload the new file1.txt contents because of having
+    // attempted to allocate too many unique Shm keys. A sharding mechanism in shm.rs is necessary.
     val CompleteVirtualizedProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)

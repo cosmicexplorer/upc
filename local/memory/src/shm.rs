@@ -332,6 +332,10 @@ impl ShmHandle {
   pub fn get_base_address(&self) -> *const os::raw::c_void {
     self.mmap_addr
   }
+
+  pub fn is_empty(&self) -> bool {
+    self.key.size_bytes == 0
+  }
 }
 
 impl Deref for ShmHandle {
@@ -404,7 +408,7 @@ impl ShmHandle {
     };
     if let Some(existing_handle) = maybe_existing_handle {
       match creation_behavior {
-        _ if key.size_bytes == 0 => Ok(existing_handle),
+        _ if existing_handle.is_empty() => Ok(existing_handle),
         CreationBehavior::CreateNew(source) => {
           /* We validate the digest here only because we know the segment was already created and
            * should have exactly the right bytes! */
@@ -483,7 +487,7 @@ impl ShmHandle {
    * to disk. */
   /* TODO: investigate garbage collection policy for anonymous shared mappings, if necessary! */
   pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
-    if self.size_bytes == 0 {
+    if self.is_empty() {
       return Ok(());
     }
     match (*IN_PROCESS_SHM_MAPPINGS).write().remove(&self.key) {
