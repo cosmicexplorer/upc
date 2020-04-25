@@ -18,14 +18,17 @@ case class OpenedFile(fd: FD)
 
 sealed abstract class VFSError(message: String) extends IOException(message)
 case class LocationFailed(message: String) extends VFSError(message)
-case class WrongEntryType(message: String) extends VFSError(message)
+
+case class ReadFD[T](fd: T)
+case class WriteFD[T](fd: T)
 
 
 trait VFS {
-  def openFile(path: PathType): Try[FileDescriptorType]
+  def openFileRead(path: PathType): Try[ReadFD[FileDescriptorType]]
+  def openFileWrite(path: PathType): Try[WriteFD[FileDescriptorType]]
   def updateFileContents(path: PathType, file: FileType): Unit
-  def asReadableFile(descriptor: FileDescriptorType): Readable
-  def asWritableFile(descriptor: FileDescriptorType): Writable
+  def asReadableFile(descriptor: ReadFD[FileDescriptorType]): Readable
+  def asWritableFile(descriptor: WriteFD[FileDescriptorType]): Writable
   def expandGlobs(globs: GlobsType): Try[Seq[PathType]]
 
   def cwd: PathType
@@ -54,11 +57,14 @@ trait VFSImplicits { self: VFS =>
     implicit object FileAsPath extends AsPath[java.io.File, Path] {
       override def asPath(self: java.io.File) = Path(self)
     }
+    implicit object StringAsPath extends AsPath[String, Path] {
+      override def asPath(self: String) = pwd / self
+    }
 
     implicit class PathWrapper[T](pathLike: T)(implicit pathConverter: AsPath[T, PathType]) {
       private def asPath: PathType = pathConverter.asPath(pathLike)
-      def locateReadableStream(): Readable = openFile(asPath).map(asReadableFile(_)).get
-      def locateWritableStream(): Writable = openFile(asPath).map(asWritableFile(_)).get
+      def locateReadableStream(): Readable = openFileRead(asPath).map(asReadableFile(_)).get
+      def locateWritableStream(): Writable = openFileWrite(asPath).map(asWritableFile(_)).get
     }
   }
 }
@@ -78,98 +84,107 @@ class DescriptorTrackingVFS(_cwd: Path, fileMapping: FileMapping) extends VFS {
   override def currentFileMapping: FileMapping = fileMapping
 
   val openedPathMapping: mutable.Map[OpenedFile, Path] = mutable.Map.empty
-  val fdMapping: mutable.Map[OpenedFile, File] = mutable.Map.empty
-  val fdSeekPositions: mutable.Map[OpenedFile, Long] = mutable.Map.empty
-  val pendingWrites: mutable.Map[OpenedFile, WritableFile] = mutable.Map.empty
+  val fdMapping: mutable.Map[ReadFD[OpenedFile], File] = mutable.Map.empty
+  val fdSeekPositions: mutable.Map[ReadFD[OpenedFile], Long] = mutable.Map.empty
+  val pendingWrites: mutable.Map[WriteFD[OpenedFile], WritableFile] = mutable.Map.empty
 
-  override def openFile(path: Path): Try[OpenedFile] = Try {
-    fileMapping.get(path) match {
+  override def openFileRead(path: Path): Try[ReadFD[OpenedFile]] = Try {
+    currentFileMapping.get(path) match {
       case None => throw LocationFailed(s"failed to locate path $path")
-      case Some(x: File) => {
+      case Some(x) => {
         val descriptor = OpenedFile(new FD)
         openedPathMapping(descriptor) = path
-        fdMapping(descriptor) = x
-        fdSeekPositions(descriptor) = 0
-        descriptor
+        ReadFD(descriptor)
       }
-      case Some(x) => throw WrongEntryType(s"result $x was not a file")
     }
   }
+  override def openFileWrite(path: Path): Try[WriteFD[OpenedFile]] = Try {
+    val descriptor = OpenedFile(new FD)
+    openedPathMapping(descriptor) = path
+    WriteFD(descriptor)
+  }
+
+
   override def updateFileContents(path: Path, file: File): Unit = {
     fileMapping.update(path, file)
   }
 
-  def newHandle(openedFile: OpenedFile): FileHandle = new FileHandle(openedFile, this)
-
-  override def asReadableFile(openedFile: OpenedFile): Readable =
-    new ReadableFile(newHandle(openedFile))
-  override def asWritableFile(openedFile: OpenedFile): Writable =
-    new WritableFile(newHandle(openedFile))
+  override def asReadableFile(openedFile: ReadFD[OpenedFile]): Readable = {
+    val readable = new ReadableFile(openedFile, this)
+    val path = getPath(openedFile.fd)
+    val file = currentFileMapping.get(path).get
+    fdMapping(openedFile) = file
+    fdSeekPositions(openedFile) = 0
+    readable
+  }
+  override def asWritableFile(openedFile: WriteFD[OpenedFile]): Writable = {
+    val writable = new WritableFile(openedFile, this)
+    pendingWrites(openedFile) = writable
+    writable
+  }
 
   override def expandGlobs(globs: PathGlobs): Try[Seq[Path]] = Try { ??? }
 
-  def readAll(openedFile: OpenedFile): Array[Byte] = this.synchronized {
-    getFile(openedFile).content
+  def readAll(openedFile: ReadFD[OpenedFile]): Array[Byte] = this.synchronized {
+    fdMapping(openedFile).content
   }
-  def readBytesAt(openedFile: OpenedFile, output: Array[Byte]): Int = this.synchronized {
-    getFile(openedFile).readFrom(getSeek(openedFile), output)
+  def readBytesAt(openedFile: ReadFD[OpenedFile], output: Array[Byte]): Int = this.synchronized {
+    fdMapping(openedFile).readFrom(getSeek(openedFile), output)
   }
 
-  def getFile(openedFile: OpenedFile): File = fdMapping(openedFile)
   def getPath(openedFile: OpenedFile): Path = openedPathMapping(openedFile)
-  def getSeek(openedFile: OpenedFile): Long = fdSeekPositions(openedFile)
+  def getSeek(openedFile: ReadFD[OpenedFile]): Long = fdSeekPositions(openedFile)
 
-  def closeFile(openedFile: OpenedFile): Unit = this.synchronized {
-    openedPathMapping -= openedFile
+  def closeReadFile(openedFile: ReadFD[OpenedFile]): Unit = this.synchronized {
+    openedPathMapping -= openedFile.fd
     fdMapping -= openedFile
     fdSeekPositions -= openedFile
   }
 
-  def flushWriteFile(openedFile: OpenedFile, newFile: File): Unit = this.synchronized {
-    val prevPath = getPath(openedFile)
+  def flushWriteFile(openedFile: WriteFD[OpenedFile], newFile: File): Unit = this.synchronized {
+    val prevPath = getPath(openedFile.fd)
     updateFileContents(prevPath, newFile)
   }
 
-  def closeWriteFile(openedFile: OpenedFile, newFile: File): Unit = this.synchronized {
-    val prevPath = getPath(openedFile)
-    closeFile(openedFile)
+  def closeWriteFile(openedFile: WriteFD[OpenedFile], newFile: File): Unit = this.synchronized {
+    val prevPath = getPath(openedFile.fd)
+    openedPathMapping -= openedFile.fd
     pendingWrites -= openedFile
     updateFileContents(prevPath, newFile)
   }
 }
 
-class FileHandle(openedFile: OpenedFile, vfs: DescriptorTrackingVFS) {
-  def getFile(): File = vfs.getFile(openedFile)
-  def getPath(): Path = vfs.getPath(openedFile)
-  def getSeek(): Long = vfs.getSeek(openedFile)
+class ReadableFile(
+  fd: ReadFD[OpenedFile],
+  vfs: DescriptorTrackingVFS,
+) extends Readable with Closeable {
+  override protected def readBytes(output: Array[Byte]): Int = vfs.readBytesAt(fd, output)
 
-  def readBytesAt(output: Array[Byte]): Int = vfs.readBytesAt(openedFile, output)
-  def readAll(): Array[Byte] = vfs.readAll(openedFile)
+  override def readAll(): Array[Byte] = {
+    val ret = vfs.readAll(fd)
+    close()
+    ret
+  }
 
-  def flushForWrite(newFile: File): Unit = vfs.flushWriteFile(openedFile, newFile)
-
-  def closeForRead(): Unit = vfs.closeFile(openedFile)
-  def closeForWrite(newFile: File): Unit = vfs.closeWriteFile(openedFile, newFile)
+  override def close(): Unit = vfs.closeReadFile(fd)
 }
 
-class ReadableFile(handle: FileHandle) extends Readable with Closeable {
-  override protected def readBytes(output: Array[Byte]): Int = handle.readBytesAt(output)
-
-  override def readAll(): Array[Byte] = handle.readAll()
-
-  override def close(): Unit = handle.closeForRead()
-}
-
-class WritableFile(handle: FileHandle) extends Writable with Closeable {
+class WritableFile(
+  fd: WriteFD[OpenedFile],
+  vfs: DescriptorTrackingVFS,
+) extends Writable with Closeable {
   val sink = new ByteArrayOutputStream()
 
   override protected def writeBytes(input: Array[Byte]): Unit = sink.write(input, 0, input.length)
 
-  override def writeAll(input: Array[Byte]): Unit = writeBytes(input)
+  override def writeAll(input: Array[Byte]): Unit = {
+    writeBytes(input)
+    close()
+  }
 
   private def asNewFile = File(MemoryMapping.fromArray(sink.toByteArray))
 
-  override def flush(): Unit = handle.flushForWrite(asNewFile)
+  override def flush(): Unit = vfs.flushWriteFile(fd, asNewFile)
 
-  override def close(): Unit = handle.closeForWrite(asNewFile)
+  override def close(): Unit = vfs.closeWriteFile(fd, asNewFile)
 }
