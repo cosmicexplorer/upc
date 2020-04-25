@@ -21,12 +21,14 @@ members = [
   ".",
   "memory",
   "directory",
+  "memory/intrusive-table",
 ]
 
 default-members = [
   ".",
   "memory",
   "directory",
+  "memory/intrusive-table",
 ]
 
 

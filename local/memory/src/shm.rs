@@ -18,14 +18,32 @@ use std::ptr;
 use std::slice;
 use std::sync::Arc;
 
+/* The FFI-friendly unsigned integer type used for measuring sizes of allocated memory regions. */
 pub type SizeType = u64;
 
+/* Randomly generated, intended to be unique but also static across compiled versions of the
+ * library. */
+pub const UPC_SHM_KEY: key_t = 0x47d0ff312d99;
+pub const DEFAULT_SHM_REGION_SIZE: usize = 2_000_000; /* 2MB */
+
 lazy_static! {
+  static ref UPC_RAW_SHM_HANDLE: Arc<RwLock<RawShmHandle>> = {
+    let ret = RawShmHandle::new(UPC_SHM_KEY, DEFAULT_SHM_REGION_SIZE).unwrap();
+    Arc::new(RwLock::new(ret))
+  };
   static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> = {
     let mut map: HashMap<ShmKey, ShmHandle> = HashMap::new();
+    /* Insert a special case for the empty digest. */
     map.insert(ShmKey::default(), ShmHandle::default());
     Arc::new(RwLock::new(map))
   };
+}
+
+/* This is a preprocessor define, so we have to recreate it. It could be a global variable, but
+ * usage of mem::transmute::<>() isn't allowed at top level without a lazy_static!{}. */
+#[allow(non_snake_case)]
+pub unsafe fn MAP_FAILED() -> *mut os::raw::c_void {
+  mem::transmute::<i64, *mut os::raw::c_void>(-1)
 }
 
 #[derive(Debug)]
@@ -41,6 +59,112 @@ impl From<String> for ShmError {
   }
 }
 
+struct RawShmHandle {
+  full_shm_region_size: usize,
+  mmap_addr: *mut os::raw::c_void,
+  key: key_t,
+  shared_memory_identifier: os::raw::c_int,
+}
+
+impl RawShmHandle {
+  pub fn new(key: key_t, full_shm_region_size: usize) -> Result<Self, ShmError> {
+    /* Get an identifier for the shared memory region, which can then be mapped into the process
+     * address space. The region may exist already. If the region exists already and the requested
+     * size is greater than the region's size, there should be an error. See `man shmget`. */
+    let fd_perm = IPC_R | IPC_W | IPC_CREAT;
+    let shared_memory_identifier: os::raw::c_int = unsafe {
+      let fd = mmap_bindings::shmget(
+        key,
+        full_shm_region_size as size_t,
+        fd_perm as os::raw::c_int,
+      );
+      if fd == -1 {
+        return Err(format!("failed to open SHM: {:?}", io::Error::last_os_error()).into());
+      }
+      fd
+    };
+    /* Map the shared memory region into the current process's address space. This region may or
+     * may not already be initialized. */
+    let shmat_prot = 0; /* We want to read and write to this memory. */
+    let mmap_addr: *mut os::raw::c_void = unsafe {
+      let addr = mmap_bindings::shmat(shm_fd, ptr::null(), shmat_prot as os::raw::c_int);
+      if addr == MAP_FAILED() {
+        return Err(
+          format!(
+            "failed to mmap SHM at fd {:?}: {:?}",
+            shared_memory_identifier,
+            io::Error::last_os_error()
+          )
+          .into(),
+        );
+      }
+      addr
+    };
+    /* FIXME: initialize the intrusive hash table!!! */
+    Ok(RawShmHandle {
+      full_shm_region_size,
+      mmap_addr,
+      key,
+      shared_memory_identifier,
+    })
+  }
+
+  /* Note: this destroys the mapping for every other process too! This should only be used to free
+   * up memory, but even then, it's likely too many shared mappings will just end up getting paged
+   * to disk. Hence only being on for testing! */
+  #[cfg(test)]
+  pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
+    /* Unmap the shared memory region from the process address space. */
+    let mut rc = unsafe { mmap_bindings::shmdt(self.mmap_addr) };
+    /* If the shmdt() call *didn't* fail, move on to shmctl() to destroy it for all processes. */
+    if rc == 0 {
+      rc = unsafe {
+        mmap_bindings::shmctl(
+          self.shared_memory_identifier,
+          IPC_RMID as os::raw::c_int,
+          ptr::null_mut(),
+        )
+      };
+    }
+    if rc == -1 {
+      Err(
+        format!(
+          "error dropping shm mapping: {:?}",
+          io::Error::last_os_error()
+        )
+        .into(),
+      )
+    } else {
+      Ok(())
+    }
+  }
+}
+
+impl Deref for RawShmHandle {
+  type Target = [u8];
+
+  fn deref(&self) -> &[u8] {
+    unsafe {
+      slice::from_raw_parts(
+        mem::transmute::<*mut os::raw::c_void, *const u8>(self.mmap_addr),
+        self.full_shm_region_size,
+      )
+    }
+  }
+}
+
+impl DerefMut for RawShmHandle {
+  fn deref_mut(&mut self) -> &mut [u8] {
+    unsafe {
+      slice::from_raw_parts_mut(
+        mem::transmute::<*mut os::raw::c_void, *mut u8>(self.mmap_addr),
+        self.full_shm_region_size,
+      )
+    }
+  }
+}
+
+/* FFI!!!! */
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ShmKey {
@@ -53,17 +177,17 @@ impl Default for ShmKey {
   }
 }
 
-impl From<ShmKey> for key_t {
-  fn from(value: ShmKey) -> Self {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+/* impl From<ShmKey> for key_t { */
+/*   fn from(value: ShmKey) -> Self { */
+/*     use std::collections::hash_map::DefaultHasher; */
+/*     use std::hash::{Hash, Hasher}; */
 
-    let mut hasher = DefaultHasher::new();
-    Hash::hash(&value, &mut hasher);
+/*     let mut hasher = DefaultHasher::new(); */
+/*     Hash::hash(&value, &mut hasher); */
 
-    hasher.finish() as key_t
-  }
-}
+/*     hasher.finish() as key_t */
+/*   } */
+/* } */
 
 impl From<Digest> for ShmKey {
   fn from(digest: Digest) -> Self {
@@ -306,9 +430,7 @@ impl Default for ShmDeleteResult {
 #[derive(Debug, Copy, Clone)]
 pub struct ShmHandle {
   key: ShmKey,
-  size_bytes: usize,
   mmap_addr: *mut os::raw::c_void,
-  shared_memory_identifier: os::raw::c_int,
 }
 impl Default for ShmHandle {
   fn default() -> Self {
@@ -481,49 +603,6 @@ impl ShmHandle {
       Ok(result)
     }
   }
-
-  /* Note: this destroys the mapping for every other process too! This should only be used to free
-   * up memory, but even then, it's likely too many shared mappings will just end up getting paged
-   * to disk. */
-  /* TODO: investigate garbage collection policy for anonymous shared mappings, if necessary! */
-  pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
-    if self.is_empty() {
-      return Ok(());
-    }
-    match (*IN_PROCESS_SHM_MAPPINGS).write().remove(&self.key) {
-      Some(_) => (),
-      None => return Err(format!("could not locate shm mapping to delete: {:?}", self.key).into()),
-    }
-    let mut rc = unsafe { mmap_bindings::shmdt(self.mmap_addr) };
-    /* If the shmdt() call *didn't* fail, move on to shmctl() to destroy it for all processes. */
-    if rc == 0 {
-      rc = unsafe {
-        mmap_bindings::shmctl(
-          self.shared_memory_identifier,
-          IPC_RMID as os::raw::c_int,
-          ptr::null_mut(),
-        )
-      };
-    }
-    if rc == -1 {
-      Err(
-        format!(
-          "error dropping shm mapping: {:?}",
-          io::Error::last_os_error()
-        )
-        .into(),
-      )
-    } else {
-      Ok(())
-    }
-  }
-}
-
-/* This is a preprocessor define, so we have to recreate it. It could be a global variable, but
- * usage of mem::transmute::<>() isn't allowed at top level without a lazy_static!{}. */
-#[allow(non_snake_case)]
-pub unsafe fn MAP_FAILED() -> *mut os::raw::c_void {
-  mem::transmute::<i64, *mut os::raw::c_void>(-1)
 }
 
 #[repr(C)]
@@ -559,7 +638,7 @@ pub unsafe extern "C" fn shm_retrieve(
     Err(ShmError::MappingDidNotExist) => {
       eprintln!("key did not exist: {:?}", key);
       ShmRetrieveResult::did_not_exist(key)
-    },
+    }
     Err(e) => {
       let error_message = CString::new(format!("{:?}", e)).unwrap();
       ShmRetrieveResult::errored(error_message.into_raw(), key)

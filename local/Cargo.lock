@@ -1086,6 +1086,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f4ebd0bd29be0f11973e9b3e219005661042a019fd757798c36a47c87852625"
 
 [[package]]
+name = "intrusive-table"
+version = "0.1.0"
+
+[[package]]
 name = "iovec"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
