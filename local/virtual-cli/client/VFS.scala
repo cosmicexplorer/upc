@@ -24,19 +24,18 @@ case class WriteFD[T](fd: T)
 
 
 trait VFS {
-  def openFileRead(path: PathType): Try[ReadFD[FileDescriptorType]]
-  def openFileWrite(path: PathType): Try[WriteFD[FileDescriptorType]]
-  def updateFileContents(path: PathType, file: FileType): Unit
+  def openFileRead(path: Path): Try[ReadFD[FileDescriptorType]]
+  def openFileWrite(path: Path): Try[WriteFD[FileDescriptorType]]
+  def updateFileContents(path: Path, file: FileType): Unit
   def asReadableFile(descriptor: ReadFD[FileDescriptorType]): Readable
   def asWritableFile(descriptor: WriteFD[FileDescriptorType]): Writable
-  def expandGlobs(globs: GlobsType): Try[Seq[PathType]]
+  def expandGlobs(globs: GlobsType): Try[Seq[Path]]
 
-  def cwd: PathType
+  def cwd: Path
 
   def currentFileMapping: FileMappingType
 
   type Error <: VFSError
-  type PathType
   type FileDescriptorType
   type FileType <: FileContent
   type GlobsType
@@ -44,25 +43,26 @@ trait VFS {
 }
 
 
-trait AsPath[T, PathType] {
-  def asPath(self: T): PathType
+trait AsPath[T] {
+  def asPath(self: T): Path
 }
 
 
 trait VFSImplicits { self: VFS =>
   object VFSImplicitDefs {
-    implicit object PathAsPath extends AsPath[Path, Path] {
+    implicit object PathAsPath extends AsPath[Path] {
       override def asPath(self: Path): Path = self
     }
-    implicit object FileAsPath extends AsPath[java.io.File, Path] {
+    implicit object FileAsPath extends AsPath[java.io.File] {
       override def asPath(self: java.io.File) = Path(self)
     }
-    implicit object StringAsPath extends AsPath[String, Path] {
-      override def asPath(self: String) = pwd / self
+    implicit object StringAsPath extends AsPath[String] {
+      override def asPath(self: String) = cwd / self
     }
 
-    implicit class PathWrapper[T](pathLike: T)(implicit pathConverter: AsPath[T, PathType]) {
-      private def asPath: PathType = pathConverter.asPath(pathLike)
+    implicit class PathWrapper[T: AsPath](pathLike: T) {
+      private val pathConverter = implicitly[AsPath[T]]
+      private def asPath: Path = pathConverter.asPath(pathLike)
       def locateReadableStream(): Readable = openFileRead(asPath).map(asReadableFile(_)).get
       def locateWritableStream(): Writable = openFileWrite(asPath).map(asWritableFile(_)).get
     }
@@ -72,10 +72,8 @@ trait VFSImplicits { self: VFS =>
 
 class DescriptorTrackingVFS(_cwd: Path, fileMapping: FileMapping) extends VFS {
   type Error = VFSError
-  type PathType = Path
   type FileDescriptorType = OpenedFile
   type FileType = File
-  type RelPathType = RelPath
   type GlobsType = PathGlobs
   type FileMappingType = FileMapping
 

@@ -192,11 +192,29 @@ object DirectoryMapping {
 
   import LibDirectory.instance
 
+  def expandDigest(digest: DirectoryDigest): Try[PathStats] = Try {
+    val req = ExpandDirectoriesRequest(Seq(digest))
+    val mapping = expand(req).get match {
+      case ExpandSucceeded(mapping) => mapping
+    }
+    val (_digest, pathStats) = mapping.mapping.toSeq.apply(0)
+    pathStats
+  }
+
   def expand(request: ExpandDirectoriesRequest): Try[ExpandDirectoriesResult] = Try {
     val req = request.intoNative().get
     val res = new LibDirectory.ExpandDirectoriesResult
     instance.directories_expand(req, res)
     res.fromNative().get
+  }
+
+  def uploadPathStats(pathStats: PathStats): Try[DirectoryDigest] = Try {
+    val req = UploadDirectoriesRequest(Seq(pathStats))
+    val mapping = upload(req).get match {
+      case UploadSucceeded(mapping) => mapping
+    }
+    val (digest, _pathStats) = mapping.mapping.toSeq.apply(0)
+    digest
   }
 
   def upload(request: UploadDirectoriesRequest): Try[UploadDirectoriesResult] = Try {

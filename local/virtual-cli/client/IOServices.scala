@@ -58,12 +58,7 @@ class IOServices(cwd: Path, config: IOServicesConfig) {
 
   def uploadVFS(fileMapping: FileMapping): Future[DirectoryDigest] = Future { blocking {
     val pathStats = fileMapping.intoPathStats(cwd).get
-    val uploadRequest = directory.UploadDirectoriesRequest(Seq(pathStats))
-    val mapping = directory.DirectoryMapping.upload(uploadRequest).get match {
-      case directory.UploadSucceeded(directory.ExpandDirectoriesMapping(mapping)) => mapping
-    }
-    val (digest, _stats) = mapping.toSeq.apply(0)
-    digest
+    directory.DirectoryMapping.uploadPathStats(pathStats).get
   }}
 
   def writeIOState(

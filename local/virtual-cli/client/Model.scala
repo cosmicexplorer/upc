@@ -64,7 +64,7 @@ case class File(bytes: MemoryMapping) extends FileContent {
   override def readFrom(offset: Long, output: Array[Byte]): Int = bytes.readBytesAt(offset, output)
 }
 
-class FileMapping(allTrackedPaths: mutable.Map[Path, File]) {
+case class FileMapping(allTrackedPaths: mutable.Map[Path, File]) {
   def get(path: Path): Option[File] = this.synchronized { allTrackedPaths.get(path) }
   def update(path: Path, file: File): Unit = this.synchronized {
     allTrackedPaths(path) = file
@@ -103,6 +103,6 @@ object FileMapping {
         map(path) = file
       }
     }
-    new FileMapping(map)
+    FileMapping(map)
   }
 }

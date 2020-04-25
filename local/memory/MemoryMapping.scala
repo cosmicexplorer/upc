@@ -203,6 +203,11 @@ object Shm {
 
   import LibMemory.instance
 
+  def keyFor(bytes: Array[Byte]): Try[ShmKey] = Try {
+    val mapping = MemoryMapping.fromArray(bytes)
+    getKey(ShmGetKeyRequest(mapping)).get
+  }
+
   def getKey(request: ShmGetKeyRequest): Try[ShmKey] = Try {
     val req = request.intoNative().get
     val res = new LibMemory.ShmKey

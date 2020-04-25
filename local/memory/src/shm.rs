@@ -432,6 +432,7 @@ impl ShmHandle {
           let errno = io::Error::last_os_error();
           match (creation_behavior, errno.kind()) {
             (CreationBehavior::DoNotCreateNew, io::ErrorKind::NotFound) => {
+              eprintln!("fd for shm key {:?} did not exist", key);
               return Err(ShmError::MappingDidNotExist);
             }
             _ => {
@@ -551,7 +552,10 @@ pub unsafe extern "C" fn shm_retrieve(
   let key = (*request).key;
   *result = match ShmHandle::new((*request).into()) {
     Ok(shm_handle) => ShmRetrieveResult::successful(shm_handle.get_base_address(), key),
-    Err(ShmError::MappingDidNotExist) => ShmRetrieveResult::did_not_exist(key),
+    Err(ShmError::MappingDidNotExist) => {
+      eprintln!("key did not exist: {:?}", key);
+      ShmRetrieveResult::did_not_exist(key)
+    },
     Err(e) => {
       let error_message = CString::new(format!("{:?}", e)).unwrap();
       ShmRetrieveResult::errored(error_message.into_raw(), key)

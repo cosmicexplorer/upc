@@ -19,6 +19,8 @@ trait VirtualizationImplementation {
 
   def acquireIOServicesConfig(): Try[IOServicesConfig]
 
+  lazy val ioLayer: VirtualIOLayer = new VirtualIOLayer
+
   def withVirtualIOLayer(
     cwd: Path,
   )(runMainMethod: => Int): Future[CompleteVirtualizedProcessResult] = {
@@ -29,11 +31,11 @@ trait VirtualizationImplementation {
     implicit val executor = ioConfig.executor
 
     for {
-      () <- VirtualIOLayer.setUp(IOLayerConfig(cwd, ioConfig))
+      () <- ioLayer.setUp(IOLayerConfig(cwd, ioConfig))
       exitCode <- Future { blocking { runMainMethod } }.map(ExitCode(_))
       // Dump stdio.
       stdioResults = inMemStdio.collect()
-      result <- VirtualIOLayer.exit(VirtualizedProcessExit(exitCode, stdioResults))
+      result <- ioLayer.exit(VirtualizedProcessExit(exitCode, stdioResults))
     } yield result
   }
 
@@ -49,6 +51,8 @@ trait MainWrapper extends VirtualizationImplementation {
   val PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT"
 
   val EXECUTOR_NUM_THREADS_ENV_VAR = "UPC_EXECUTOR_NUM_THREADS"
+
+  override lazy val ioLayer: VirtualIOLayer = VirtualIOLayer
 
   implicit lazy val executor: ExecutionContext = {
     val numThreads: Int = sys.env.get(EXECUTOR_NUM_THREADS_ENV_VAR) match {
