@@ -23,13 +23,15 @@ object MemoryMapping {
 }
 
 class MemoryMapping(val pointer: Pointer) {
-  def size: Long = pointer.size
+  def nonNull = pointer.address != 0
 
-  lazy val getBytes: Array[Byte] = {
+  def size: Long = if (nonNull) pointer.size else 0
+
+  lazy val getBytes: Array[Byte] = if (nonNull) {
     val bytes: Array[Byte] = new Array(pointer.size.toInt)
     pointer.get(0, bytes, 0, bytes.length)
     bytes
-  }
+  } else Array()
 
   def readBytesAt(offset: Long, output: Array[Byte]): Int = {
     if (offset < 0) {

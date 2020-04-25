@@ -21,8 +21,11 @@ use std::sync::Arc;
 pub type SizeType = u64;
 
 lazy_static! {
-  static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> =
-    Arc::new(RwLock::new(HashMap::new()));
+  static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> = {
+    let mut map: HashMap<ShmKey, ShmHandle> = HashMap::new();
+    map.insert(ShmKey::default(), ShmHandle::default());
+    Arc::new(RwLock::new(map))
+  };
 }
 
 #[derive(Debug)]
@@ -200,7 +203,6 @@ pub struct ShmAllocateResult {
 }
 impl ShmAllocateResult {
   pub fn successful(address: *const os::raw::c_void, key: ShmKey) -> Self {
-    assert!(!address.is_null());
     ShmAllocateResult {
       status: ShmAllocateResultStatus::AllocationSucceeded,
       address,
@@ -308,6 +310,16 @@ pub struct ShmHandle {
   mmap_addr: *mut os::raw::c_void,
   shared_memory_identifier: os::raw::c_int,
 }
+impl Default for ShmHandle {
+  fn default() -> Self {
+    ShmHandle {
+      key: ShmKey::default(),
+      size_bytes: 0,
+      mmap_addr: ptr::null_mut(),
+      shared_memory_identifier: -1,
+    }
+  }
+}
 
 unsafe impl Send for ShmHandle {}
 unsafe impl Sync for ShmHandle {}
@@ -386,18 +398,13 @@ impl ShmHandle {
       creation_behavior,
     } = request;
 
-    std::fs::write(
-      "/Users/dmcclanahan/projects/active/upc/key.txt",
-      &format!("+{:?}", key),
-    )
-    .unwrap();
-
     let maybe_existing_handle: Option<ShmHandle> = {
       let mappings = (*IN_PROCESS_SHM_MAPPINGS).read();
       mappings.get(&key).cloned()
     };
     if let Some(existing_handle) = maybe_existing_handle {
       match creation_behavior {
+        _ if key.size_bytes == 0 => Ok(existing_handle),
         CreationBehavior::CreateNew(source) => {
           /* We validate the digest here only because we know the segment was already created and
            * should have exactly the right bytes! */
@@ -407,12 +414,6 @@ impl ShmHandle {
         CreationBehavior::DoNotCreateNew => Ok(existing_handle),
       }
     } else {
-      std::fs::write(
-        "/Users/dmcclanahan/projects/active/upc/key.txt",
-        &format!("-{:?}", key),
-      )
-      .unwrap();
-
       let fd_perm = IPC_R
         | IPC_W
         | match creation_behavior {
@@ -420,12 +421,6 @@ impl ShmHandle {
           CreationBehavior::DoNotCreateNew => 0,
         };
       let shm_address_key: key_t = key.into();
-
-      std::fs::write(
-        "/Users/dmcclanahan/projects/active/upc/addr_key.txt",
-        &format!("{:?}", shm_address_key),
-      )
-      .unwrap();
 
       let shm_fd = unsafe {
         let fd = mmap_bindings::shmget(
@@ -444,23 +439,12 @@ impl ShmHandle {
                 "failed to open SHM with creation behavior {:?}: {:?}",
                 creation_behavior, errno,
               );
-              std::fs::write(
-                "/Users/dmcclanahan/projects/active/upc/message.txt",
-                &format!("{:?}", &message),
-              )
-              .unwrap();
               return Err(message.into());
             }
           }
         }
         fd
       };
-
-      std::fs::write(
-        "/Users/dmcclanahan/projects/active/upc/shm_fd.txt",
-        &format!("{:?}", shm_fd),
-      )
-      .unwrap();
 
       let shmat_prot = 0;
       let mmap_addr = unsafe {
@@ -478,12 +462,6 @@ impl ShmHandle {
         mmap_addr,
         shared_memory_identifier: shm_fd,
       };
-
-      std::fs::write(
-        "/Users/dmcclanahan/projects/active/upc/result.txt",
-        &format!("{:?}", &result),
-      )
-      .unwrap();
 
       match creation_behavior {
         CreationBehavior::CreateNew(source) => {
@@ -504,6 +482,9 @@ impl ShmHandle {
    * to disk. */
   /* TODO: investigate garbage collection policy for anonymous shared mappings, if necessary! */
   pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
+    if self.size_bytes == 0 {
+      return Ok(());
+    }
     match (*IN_PROCESS_SHM_MAPPINGS).write().remove(&self.key) {
       Some(_) => (),
       None => return Err(format!("could not locate shm mapping to delete: {:?}", self.key).into()),
@@ -584,29 +565,13 @@ pub unsafe extern "C" fn shm_allocate(
   result: *mut ShmAllocateResult,
 ) {
   let key = (*request).key;
-
-  std::fs::write(
-    "/Users/dmcclanahan/projects/active/upc/request.txt",
-    &format!("+{:?}", request),
-  )
-  .unwrap();
   let shm_request = (*request).into();
-  std::fs::write(
-    "/Users/dmcclanahan/projects/active/upc/request.txt",
-    &format!(">{:?}", shm_request),
-  )
-  .unwrap();
 
   *result = match ShmHandle::new(shm_request) {
     Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address(), key),
     Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
     Err(e) => {
       let error: String = format!("{:?}", e);
-      std::fs::write(
-        "/Users/dmcclanahan/projects/active/upc/error.txt",
-        &format!("!!{:?}", &error),
-      )
-      .unwrap();
       let error_message = CString::new(error).unwrap();
       ShmAllocateResult::failing(error_message.into_raw(), key)
     }

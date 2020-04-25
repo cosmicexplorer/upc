@@ -75,12 +75,16 @@ object LibMemory {
     // Copy out the memory from the pointer to a directly allocated buffer.
     lazy val getAddressPointer: jnr.ffi.Pointer = {
       val n = getSize.toInt
-      val intermediateArray: Array[Byte] = new Array(n)
-      address.get.get(0, intermediateArray, 0, n)
-      // FIXME: Why do we have to explicitly allocate new direct memory to avoid segfaults? Why
-      // can't we just use a pointer directly to that memory (the pointer returned by calling the
-      // FFI method)?
-      intoDirectPointer(intermediateArray)
+      if (n == 0) {
+        jnr.ffi.Pointer.wrap(runtime, 0)
+      } else {
+        val intermediateArray: Array[Byte] = new Array(n)
+        address.get.get(0, intermediateArray, 0, n)
+        // FIXME: Why do we have to explicitly allocate new direct memory to avoid segfaults? Why
+        // can't we just use a pointer directly to that memory (the pointer returned by calling the
+        // FFI method)?
+        intoDirectPointer(intermediateArray)
+      }
     }
   }
 
