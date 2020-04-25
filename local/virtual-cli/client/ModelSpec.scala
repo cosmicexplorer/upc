@@ -29,6 +29,6 @@ class ModelSpec extends FlatSpec with Matchers {
 
     val retPathStats = fileMapping.intoPathStats(pwd).get
 
-    pathStats should === (retPathStats)
+    pathStats.fileStats.toSet should === (retPathStats.fileStats.toSet)
   }
 }
