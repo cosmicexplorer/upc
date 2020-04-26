@@ -75,6 +75,8 @@ case class FileMapping(allTrackedPaths: mutable.Map[Path, File]) {
     val fileStats = paths.map {
       case (path, file) => {
         val File(mapping) = file
+        // TODO: Only retain the files below cwd, and only retain the files matching the process
+        // execution request PathGlobs, if provided!!
         val relPath = path.relativeTo(cwd)
         val key = Shm.getKey(ShmGetKeyRequest(mapping)).get
         val () = Shm.allocate(ShmAllocateRequest(key, mapping)).get match {

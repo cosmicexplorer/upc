@@ -203,6 +203,8 @@ object Shm {
 
   import LibMemory.instance
 
+  // NB: For when the key is expected to be loaded in memory already. Mainly intended for testing
+  // purposes.
   def keyFor(bytes: Array[Byte]): Try[ShmKey] = Try {
     val mapping = MemoryMapping.fromArray(bytes)
     getKey(ShmGetKeyRequest(mapping)).get
@@ -213,6 +215,15 @@ object Shm {
     val res = new LibMemory.ShmKey
     instance.shm_get_key(req, res)
     res.fromNative().get
+  }
+
+  def allocateBytes(bytes: Array[Byte]): Try[(ShmKey, MemoryMapping)] = Try {
+    val mapping = MemoryMapping.fromArray(bytes)
+    val key = getKey(ShmGetKeyRequest(mapping)).get
+    val req = ShmAllocateRequest(key, mapping)
+    allocate(req).get match {
+      case AllocationSucceeded(key, mapping) => (key, mapping)
+    }
   }
 
   def allocate(request: ShmAllocateRequest): Try[ShmAllocateResult] = Try {

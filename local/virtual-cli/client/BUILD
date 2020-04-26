@@ -9,7 +9,6 @@ scala_library(
     'local/src/thrift:via-thrift',
     'local/directory',
     'local/memory',
-    'local/virtual-cli/util',
   ],
 )
 

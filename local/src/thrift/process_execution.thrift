@@ -52,5 +52,7 @@ service ProcessExecutionService {
   ExecuteProcessResult executeProcesses(1: VirtualizedExecuteProcessRequest execute_process_request)
     throws (1: ProcessExecutionError process_execution_error)
 
+  // NB: These two methods *would* be in different services, but Finatra only supports a single
+  // controller per thrift server, and hence only a single thrift service per server.
   void reapProcess(1: ExecuteProcessResult process_result)
 }

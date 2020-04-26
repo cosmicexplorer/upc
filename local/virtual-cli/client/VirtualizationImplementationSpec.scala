@@ -62,11 +62,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   class ReadWriteMain extends VirtualizationImplementation {
     val inputStr = "input text!"
     val input = inputStr.getBytes
-    val inputKey = Shm.keyFor(input).get
-    val inputMapping = MemoryMapping.fromArray(input)
-    val () = Shm.allocate(ShmAllocateRequest(inputKey, inputMapping)).get match {
-      case AllocationSucceeded(_, _) => ()
-    }
+    val (inputKey, _) = Shm.allocateBytes(input).get
     val pathStats = PathStats(Seq(
       FileStat(
         key = inputKey,
@@ -96,7 +92,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   }
 
   // Different instances are needed here in order to have different instances of VirtualIOLayer, to
-  // avoid mixing files from other tests.
+  // avoid mixing output with files from other tests.
   object ReadWriteMain1 extends ReadWriteMain
   object ReadWriteMain2 extends ReadWriteMain
 
