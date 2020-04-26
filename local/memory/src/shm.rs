@@ -460,7 +460,7 @@ impl Default for ShmDeleteResult {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct ShmHandle<'a> {
+pub struct ShmHandle<'a> {
   pub key: ShmKey,
   pub data: &'a [u8],
 }

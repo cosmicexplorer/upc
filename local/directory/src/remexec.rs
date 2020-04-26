@@ -220,7 +220,7 @@ impl MerkleTrieNode {
         future::result(retrieve_result)
           .and_then(|handle| {
             LOCAL_STORE
-              .store_file_bytes(Bytes::from(&*handle), true)
+              .store_file_bytes(Bytes::from(handle.data), true)
               .map_err(|e| RemexecError::InternalError(format!("{:?}", e)))
           })
           .and_then(move |digest| {
@@ -285,7 +285,7 @@ pub fn expand_directory(digest: Digest) -> BoxFuture<Vec<FileContent>, String> {
   LOCAL_STORE.contents_for_directory(digest, PANTS_WORKUNIT_STORE.clone())
 }
 
-pub fn memory_map_file_content(bytes: &[u8]) -> Result<ShmHandle, RemexecError> {
+pub fn memory_map_file_content(bytes: &[u8]) -> Result<ShmHandle<'static>, RemexecError> {
   let digest = Digest::of_bytes(bytes);
   let key: ShmKey = digest.into();
   dbg!(key);
@@ -319,7 +319,7 @@ mod tests {
       .map(|(c, s)| {
         (
           c.clone(),
-          memory_map_file_content(s.as_bytes()).unwrap().get_key(),
+          memory_map_file_content(s.as_bytes()).unwrap().key,
         )
       })
       .collect();

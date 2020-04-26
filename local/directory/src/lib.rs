@@ -405,7 +405,7 @@ fn directories_expand_single(
           .into_iter()
           .zip(all_handles)
           .map(|(file_content, handle)| HighLevelFileStat {
-            key: handle.get_key(),
+            key: handle.key,
             rel_path: HighLevelChildRelPath {
               path: file_content.path.as_path().to_path_buf(),
             },
@@ -632,7 +632,7 @@ mod tests {
           c.clone(),
           remexec::memory_map_file_content(s.as_bytes())
             .unwrap()
-            .get_key(),
+            .key,
         )
       })
       .collect();
