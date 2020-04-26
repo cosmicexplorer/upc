@@ -211,6 +211,10 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
         /* Atomically bump up the memory line. */
         let previous_extent = allocated_region_extent.fetch_add(key.size_bytes(), Ordering::SeqCst);
         let new_extent = previous_extent + key.size_bytes();
+        /* If we run out of space, error out. */
+        if new_extent > allocatable_data.len() {
+          return Err(Error::NoMoreSpace(allocatable_data.len()));
+        }
         let new_region = &mut allocatable_data[previous_extent..new_extent];
         /* Write the source data to the new region. */
         new_region.copy_from_slice(source);
@@ -322,6 +326,75 @@ mod tests {
 
     assert_eq!(None, allocator.retrieve(&key));
     assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));
+    Ok(())
+  }
+
+  #[test]
+  fn allocate_too_large() -> Result<(), Error> {
+    let mut backing_bytes: [u8; 500] = get_backing_bytes();
+    let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
+    allocator.erase_all();
+
+    let source_bytes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_bytes();
+    assert!(source_bytes.len() > 500);
+
+    /* Returns the amount of space that was in total available to allocate. */
+    assert_eq!(
+      Err(Error::NoMoreSpace(442)),
+      allocator.allocate(source_bytes)
+    );
+    Ok(())
+  }
+
+  #[test]
+  fn allocate_too_many() -> Result<(), Error> {
+    let mut backing_bytes: [u8; 500] = get_backing_bytes();
+    let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
+    allocator.erase_all();
+
+    let mut errored: bool = false;
+    for i in 0..50 {
+      /* Generate a non-repeating sequence of bytes. */
+      let mut i = i as u32;
+      let source_bytes: &mut [u8] =
+        unsafe { slice::from_raw_parts_mut(mem::transmute::<&mut u32, *mut u8>(&mut i), 4) };
+      match allocator.allocate(source_bytes) {
+        Ok(_) => (),
+        Err(Error::OutOfHashableSpots(x)) => {
+          /* Assert that this failure occurs because there are only two spots available to allocate
+           * in the hash table in total. */
+          assert_eq!(x, 2);
+          errored = true;
+        }
+        Err(_) => unreachable!(),
+      };
+    }
+    assert!(errored);
+    Ok(())
+  }
+
+  #[test]
+  fn allocate_can_pick_up_where_left_off() -> Result<(), Error> {
+    let mut backing_bytes: [u8; 500] = get_backing_bytes();
+
+    let source_bytes = "asdfasdfasdf".as_bytes();
+    let key = Key::digest(source_bytes);
+
+    {
+      let mut allocator =
+        IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
+      allocator.erase_all();
+
+      assert_eq!(None, allocator.retrieve(&key));
+      assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));
+
+      allocator.allocate(source_bytes)?;
+    }
+
+    {
+      let allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
+      assert_eq!(source_bytes, allocator.retrieve(&key).unwrap());
+    }
 
     Ok(())
   }
