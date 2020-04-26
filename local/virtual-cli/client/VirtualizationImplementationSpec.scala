@@ -59,8 +59,9 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
     pathStats should === (expectedPathStats)
   }
 
-  object ReadWriteMain extends VirtualizationImplementation {
-    val input = "input text!".getBytes
+  class ReadWriteMain extends VirtualizationImplementation {
+    val inputStr = "input text!"
+    val input = inputStr.getBytes
     val inputKey = Shm.keyFor(input).get
     val inputMapping = MemoryMapping.fromArray(input)
     val () = Shm.allocate(ShmAllocateRequest(inputKey, inputMapping)).get match {
@@ -79,7 +80,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
       executor = global,
     ))
 
-    val appendExtra = "extra text!".getBytes
+    val appendExtraStr = "extra text!"
 
     override def virtualizedMainMethod(args: Array[String]): Int = {
       import ioLayer.Implicits._
@@ -87,18 +88,21 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
       val Array(inFile, outFile, _*) = args
       val input = inFile.locateReadableStream().readAll()
       val toWrite = if (args.length > 2) {
-        (input + new String(appendExtra, "UTF-8")).getBytes
+        (inputStr + appendExtraStr).getBytes
       } else input
       outFile.locateWritableStream().writeAll(toWrite)
       0
     }
   }
 
+  object ReadWriteMain1 extends ReadWriteMain
+  object ReadWriteMain2 extends ReadWriteMain
+
   "The ReadWriteMain object" should "successfully read and write separate files" in {
     val CompleteVirtualizedProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)
-    ) = Await.result(ReadWriteMain.mainWrapper(Array("file1.txt", "file2.txt"), pwd), Duration.Inf)
+    ) = Await.result(ReadWriteMain1.mainWrapper(Array("file1.txt", "file2.txt"), pwd), Duration.Inf)
     exitCode should be (0)
     stdout should === (ShmKey(Digest.empty))
     stderr should === (ShmKey(Digest.empty))
@@ -106,11 +110,11 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
     val pathStats = DirectoryMapping.expandDigest(digest).get
     val expectedPathStats = PathStats(Seq(
       FileStat(
-        key = Shm.keyFor(ReadWriteMain.input).get,
+        key = Shm.keyFor(ReadWriteMain1.input).get,
         path = ChildRelPath(RelPath("file1.txt"))
       ),
       FileStat(
-        key = Shm.keyFor(ReadWriteMain.input).get,
+        key = Shm.keyFor(ReadWriteMain1.input).get,
         path = ChildRelPath(RelPath("file2.txt")),
       ),
     ))
@@ -119,12 +123,10 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   }
 
   it should "successfully modify the contents of an existing file" in {
-    // FIXME: this fails when trying to upload the new file1.txt contents because of having
-    // attempted to allocate too many unique Shm keys. A sharding mechanism in shm.rs is necessary.
     val CompleteVirtualizedProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)
-    ) = Await.result(ReadWriteMain.mainWrapper(
+    ) = Await.result(ReadWriteMain2.mainWrapper(
       Array("file1.txt", "file1.txt", "THIS-ARGUMENT-WRITES-MORE-TO-FILE1"), pwd),
       Duration.Inf)
     exitCode should be (0)
@@ -132,7 +134,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
     stderr should === (ShmKey(Digest.empty))
 
     val pathStats = DirectoryMapping.expandDigest(digest).get
-    val expectedOutput = (ReadWriteMain.input + new String(ReadWriteMain.appendExtra, "UTF-8")).getBytes
+    val expectedOutput = (ReadWriteMain2.inputStr + ReadWriteMain2.appendExtraStr).getBytes
     val expectedPathStats = PathStats(Seq(
       FileStat(
         key = Shm.keyFor(expectedOutput).get,
