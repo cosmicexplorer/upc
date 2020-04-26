@@ -80,7 +80,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
       executor = global,
     ))
 
-    val appendExtraStr = "extra text!"
+    val appendExtraStr = "extra text!!"
 
     override def virtualizedMainMethod(args: Array[String]): Int = {
       import ioLayer.Implicits._
@@ -95,6 +95,8 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
     }
   }
 
+  // Different instances are needed here in order to have different instances of VirtualIOLayer, to
+  // avoid mixing files from other tests.
   object ReadWriteMain1 extends ReadWriteMain
   object ReadWriteMain2 extends ReadWriteMain
 

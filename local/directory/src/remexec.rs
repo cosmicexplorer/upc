@@ -26,7 +26,7 @@ lazy_static! {
   static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
   static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
     Some(local_store_dir) => PathBuf::from(local_store_dir),
-    None => PathBuf::from(env::var("HOME").unwrap()).join(".cache/pants/lmdb_store"),
+    None => Store::default_path(),
   };
   static ref LOCAL_STORE: Arc<Store> = {
     let executor = PANTS_TOKIO_EXECUTOR.clone();
@@ -51,7 +51,8 @@ pub enum FilePermissions {
   None,
 }
 
-/* Necessary to mediate conversions between the remexec_api digest our own digests. */
+/* Necessary to mediate conversions between the remexec_api digests and pants
+ * hashing::Digests. This could be done upstream, maybe. */
 pub struct RemexecDigestWrapper {
   pub fingerprint: Fingerprint,
   pub size_bytes: usize,
@@ -237,6 +238,7 @@ impl MerkleTrieNode {
                 permissions: FilePermissions::None,
               })
             };
+            dbg!(&result);
             future::result(result)
           })
           .to_boxed()
