@@ -1,6 +1,8 @@
 /* From https://gist.github.com/garcia556/8231e844a90457c99cc72e5add8388e4!! */
 use super::mmap_bindings::{self, key_t, size_t, IPC_CREAT, IPC_R, IPC_RMID, IPC_W};
 
+use intrusive_table::{self, IntrusiveTable};
+
 use hashing::{Digest, Fingerprint};
 
 use lazy_static::lazy_static;
@@ -56,6 +58,18 @@ pub enum ShmError {
 impl From<String> for ShmError {
   fn from(err: String) -> Self {
     ShmError::InternalError(err)
+  }
+}
+
+impl From<intrusive_table::Error> for ShmError {
+  fn from(err: intrusive_table::Error) -> Self {
+    match err {
+      intrusive_table::Error::DeleteDidNotExist => ShmError::MappingDidNotExist,
+      intrusive_table::Error::NoMoreSpace(_) => ShmError::InternalError(format!("{:?}", err)),
+      intrusive_table::Error::OutOfHashableSpots(_) => {
+        ShmError::InternalError(format!("{:?}", err))
+      }
+    }
   }
 }
 

@@ -1318,6 +1318,7 @@ dependencies = [
  "bindgen",
  "cbindgen",
  "hashing",
+ "intrusive-table",
  "lazy_static",
  "parking_lot 0.6.4",
  "serde",

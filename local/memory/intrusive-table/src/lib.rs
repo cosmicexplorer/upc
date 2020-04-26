@@ -1,3 +1,5 @@
+#![no_std]
+/* NB: THIS IS A no_std CRATE!!!!! */
 #![deny(warnings)]
 // Enable all clippy lints except for many of the pedantic ones. It's a shame this needs to be copied and pasted across crates, but there doesn't appear to be a way to include inner attributes from a common source.
 #![deny(
@@ -22,27 +24,28 @@
 // Arc<Mutex> can be more clear than needing to grok Orderings:
 #![allow(clippy::mutex_atomic)]
 
-use std::hash::Hash;
-use std::mem;
-use std::slice;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::hash::{Hash, Hasher};
+use core::mem;
+use core::slice;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Debug, Eq, PartialEq, Hash)]
 pub enum Error {
   NoMoreSpace(usize),
   OutOfHashableSpots(usize),
   DeleteDidNotExist,
 }
 
-pub trait AllocationDescriptor: Default + Eq + PartialEq + Hash + Copy + Clone {
+pub trait AllocationDescriptor: Default + Eq + PartialEq + Hash {
   fn digest(slice: &[u8]) -> Self;
   fn size_bytes(&self) -> usize;
 }
 
-pub trait IntrusiveTable<'a, K> {
-  fn erase_all(&'a mut self);
-  fn retrieve(&'a self, key: &K) -> Option<&'a [u8]>;
-  fn allocate(&'a mut self, source: &[u8]) -> Result<&'a [u8], Error>;
-  fn delete(&'a mut self, key: &K) -> Result<(), Error>;
+pub trait IntrusiveTable<K> {
+  fn erase_all(&mut self);
+  fn retrieve(&self, key: &K) -> Option<&[u8]>;
+  fn allocate(&mut self, source: &[u8]) -> Result<&[u8], Error>;
+  fn delete(&mut self, key: &K) -> Result<(), Error>;
 }
 
 #[derive(Default)]
@@ -66,6 +69,16 @@ pub struct IntrusiveAllocator<'a, K: AllocationDescriptor> {
 struct Offset(usize);
 
 pub const HASH_TABLE_SPACE_FACTOR: usize = 10;
+
+pub fn hash_usize<T: Hash>(t: &T) -> usize {
+  /* FIXME: SipHasher is deprecated, but there appears to be no alternative Hasher implementation in
+   * core? */
+  #[allow(deprecated)]
+  let mut hasher = core::hash::SipHasher::new();
+  Hash::hash(t, &mut hasher);
+
+  hasher.finish() as usize
+}
 
 impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
   ///
@@ -123,52 +136,45 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
   }
 
   /* These methods actually query/traverse the table. */
-  fn table_num_entries(&'a self) -> usize {
+  fn table_num_entries(&self) -> usize {
     self.hash_table.len()
   }
 
-  fn hash_key(&'a self, key: K) -> usize {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
-
-    let mut hasher = DefaultHasher::new();
-    Hash::hash(&key, &mut hasher);
-
-    let hash_result: usize = hasher.finish() as usize;
+  fn hash_key(&self, key: &K) -> usize {
     /* Ensure the result points to an entry within the table. */
-    hash_result % self.table_num_entries()
+    hash_usize(&key) % self.table_num_entries()
   }
 
   fn atomic_get_offset(entry: &TableEntry<K>) -> Offset {
     Offset(entry.offset.load(Ordering::SeqCst))
   }
 
-  fn get_offset_slice(&'a self, offset: Offset, key: K) -> &'a [u8] {
+  fn get_offset_slice(&self, offset: Offset, key: &K) -> &[u8] {
     let Offset(begin) = offset;
     let end = begin + key.size_bytes();
     &self.allocatable_data[begin..end]
   }
 
-  fn atomic_get_slice(&'a self, entry: &'a TableEntry<K>) -> &'a [u8] {
+  fn atomic_get_slice(&self, entry: &TableEntry<K>) -> &[u8] {
     let offset = Self::atomic_get_offset(entry);
-    self.get_offset_slice(offset, entry.key)
+    self.get_offset_slice(offset, &entry.key)
   }
 
-  fn find_existing_entry(&'a self, key: K) -> Option<&'a TableEntry<K>> {
+  fn find_existing_entry(&self, key: &K) -> Option<&TableEntry<K>> {
     /* Incredibly basic linear probing. */
     /* FIXME: probe in a ring past the end of the array! */
     for cur_entry in self.hash_table[self.hash_key(key)..].iter() {
       if cur_entry.is_default() {
         break;
       }
-      if cur_entry.key == key {
+      if cur_entry.key == *key {
         return Some(cur_entry);
       }
     }
     return None;
   }
 
-  fn find_entry_to_delete(&'a mut self, key: K) -> Result<(), Error> {
+  fn find_entry_to_delete(&mut self, key: &K) -> Result<(), Error> {
     let initial_index = self.hash_key(key);
     /* Incredibly basic linear probing. */
     /* FIXME: probe in a ring past the end of the array! */
@@ -177,7 +183,7 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
       if cur_entry.is_default() {
         break;
       }
-      if cur_entry.key == key {
+      if cur_entry.key == *key {
         /* FIXME: does this need to be written atomically as well? */
         cur_entry.key = K::default();
         /* TODO: just use TableEntry::default()? */
@@ -188,9 +194,9 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
     Err(Error::DeleteDidNotExist)
   }
 
-  fn find_first_empty_or_matching_entry(&'a mut self, source: &[u8]) -> Result<&'a [u8], Error> {
+  fn find_first_empty_or_matching_entry(&mut self, source: &[u8]) -> Result<&[u8], Error> {
     let key = K::digest(source);
-    let initial_index = self.hash_key(key);
+    let initial_index = self.hash_key(&key);
     let IntrusiveAllocator {
       hash_table,
       allocated_region_extent,
@@ -226,8 +232,8 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
   }
 }
 
-impl<'a, K: AllocationDescriptor> IntrusiveTable<'a, K> for IntrusiveAllocator<'a, K> {
-  fn erase_all(&'a mut self) {
+impl<'a, K: AllocationDescriptor> IntrusiveTable<K> for IntrusiveAllocator<'a, K> {
+  fn erase_all(&mut self) {
     /* Apparently this will compile down to vectorized operations -- see
      * https://stackoverflow.com/questions/51732596/what-is-the-equivalent-of-a-safe-memset-for-slices/51732799#51732799 */
     for entry in self.hash_table.iter_mut() {
@@ -235,27 +241,64 @@ impl<'a, K: AllocationDescriptor> IntrusiveTable<'a, K> for IntrusiveAllocator<'
     }
   }
 
-  fn retrieve(&'a self, key: &K) -> Option<&'a [u8]> {
-    self.find_existing_entry(*key).map(|cur_entry| {
+  fn retrieve(&self, key: &K) -> Option<&[u8]> {
+    self.find_existing_entry(key).map(|cur_entry| {
       /* We have definitely found an entry. This may be at the same time as another process, so we
        * load the atomic pointer. */
       self.atomic_get_slice(cur_entry)
     })
   }
 
-  fn allocate(&'a mut self, source: &[u8]) -> Result<&'a [u8], Error> {
+  fn allocate(&mut self, source: &[u8]) -> Result<&[u8], Error> {
     self.find_first_empty_or_matching_entry(source)
   }
 
-  fn delete(&'a mut self, key: &K) -> Result<(), Error> {
-    self.find_entry_to_delete(*key)
+  fn delete(&mut self, key: &K) -> Result<(), Error> {
+    self.find_entry_to_delete(key)
   }
 }
 
 #[cfg(test)]
 mod tests {
+  use super::*;
+
+  #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Hash)]
+  struct Key {
+    pub id: u32,
+    pub size: usize,
+  }
+  impl AllocationDescriptor for Key {
+    fn digest(slice: &[u8]) -> Self {
+      let id = hash_usize(&slice) as u32;
+      let size = slice.len();
+      Key { id, size }
+    }
+    fn size_bytes(&self) -> usize {
+      self.size
+    }
+  }
+
+  fn get_backing_bytes() -> [u8; 50] {
+    [
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]
+  }
+
   #[test]
-  fn it_works() {
+  fn allocate_retrieve_delete_end_to_end() -> Result<(), Error> {
+    let mut backing_bytes: [u8; 50] = get_backing_bytes();
+    let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
+    allocator.erase_all();
+
+    let source_bytes = "asdfasdfasdf".as_bytes();
+    let key = Key::digest(source_bytes);
+
+    assert_eq!(None, allocator.retrieve(&key));
+    assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));
+
     assert_eq!(2 + 2, 4);
+
+    Ok(())
   }
 }

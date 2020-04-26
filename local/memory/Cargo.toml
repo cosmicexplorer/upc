@@ -9,6 +9,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing", features = ["native-repr"] }
+intrusive-table = { path = "intrusive-table" }
 lazy_static = "1"
 parking_lot = "0.6"
 serde = "1.0"
