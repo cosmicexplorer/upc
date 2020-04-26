@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define DEFAULT_SHM_REGION_SIZE 2000000
+
 #define IPC_CREAT 512
 
 #define IPC_EXCL 1024

@@ -38,13 +38,13 @@ pub enum Error {
 
 pub trait AllocationDescriptor: Default + Eq + PartialEq + Hash {
   fn digest(slice: &[u8]) -> Self;
-  fn size_bytes(&self) -> usize;
+  fn size_of_pointed_to(&self) -> usize;
 }
 
 pub trait IntrusiveTable<K> {
   fn erase_all(&mut self);
   fn retrieve(&self, key: &K) -> Option<&[u8]>;
-  fn allocate(&mut self, source: &[u8]) -> Result<&[u8], Error>;
+  fn allocate(&mut self, source: &[u8]) -> Result<(&K, &[u8]), Error>;
   fn delete(&mut self, key: &K) -> Result<(), Error>;
 }
 
@@ -56,7 +56,7 @@ struct TableEntry<K: AllocationDescriptor> {
 
 impl<K: AllocationDescriptor> TableEntry<K> {
   pub fn is_default(&self) -> bool {
-    self.key.size_bytes() == 0
+    self.key.size_of_pointed_to() == 0
   }
 }
 
@@ -151,7 +151,7 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
 
   fn get_offset_slice(&self, offset: Offset, key: &K) -> &[u8] {
     let Offset(begin) = offset;
-    let end = begin + key.size_bytes();
+    let end = begin + key.size_of_pointed_to();
     &self.allocatable_data[begin..end]
   }
 
@@ -194,7 +194,7 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
     Err(Error::DeleteDidNotExist)
   }
 
-  fn find_first_empty_or_matching_entry(&mut self, source: &[u8]) -> Result<&[u8], Error> {
+  fn find_first_empty_or_matching_entry(&mut self, source: &[u8]) -> Result<(&K, &[u8]), Error> {
     let key = K::digest(source);
     let initial_index = self.hash_key(&key);
     let IntrusiveAllocator {
@@ -209,8 +209,8 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
       /* The entry did *not* exist already -- let's populate it. */
       if cur_entry.is_default() {
         /* Atomically bump up the memory line. */
-        let previous_extent = allocated_region_extent.fetch_add(key.size_bytes(), Ordering::SeqCst);
-        let new_extent = previous_extent + key.size_bytes();
+        let previous_extent = allocated_region_extent.fetch_add(key.size_of_pointed_to(), Ordering::SeqCst);
+        let new_extent = previous_extent + key.size_of_pointed_to();
         /* If we run out of space, error out. */
         if new_extent > allocatable_data.len() {
           return Err(Error::NoMoreSpace(allocatable_data.len()));
@@ -222,13 +222,13 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
         cur_entry.offset.store(previous_extent, Ordering::SeqCst);
         /* FIXME: does this need to be written atomically as well? */
         cur_entry.key = key;
-        return Ok(new_region);
+        return Ok((&cur_entry.key, new_region));
       }
       /* If the entry already existed, return the existing slice for it. */
       if cur_entry.key == key {
         let Offset(begin) = Self::atomic_get_offset(cur_entry);
-        let end = begin + key.size_bytes();
-        return Ok(&allocatable_data[begin..end]);
+        let end = begin + key.size_of_pointed_to();
+        return Ok((&cur_entry.key, &allocatable_data[begin..end]));
       }
     }
     /* If the entry couldn't be allocated, error out. */
@@ -243,6 +243,7 @@ impl<'a, K: AllocationDescriptor> IntrusiveTable<K> for IntrusiveAllocator<'a, K
     for entry in self.hash_table.iter_mut() {
       *entry = TableEntry::<K>::default();
     }
+    self.allocated_region_extent.store(0, Ordering::SeqCst);
   }
 
   fn retrieve(&self, key: &K) -> Option<&[u8]> {
@@ -253,7 +254,7 @@ impl<'a, K: AllocationDescriptor> IntrusiveTable<K> for IntrusiveAllocator<'a, K
     })
   }
 
-  fn allocate(&mut self, source: &[u8]) -> Result<&[u8], Error> {
+  fn allocate(&mut self, source: &[u8]) -> Result<(&K, &[u8]), Error> {
     self.find_first_empty_or_matching_entry(source)
   }
 
@@ -277,7 +278,7 @@ mod tests {
       let size = slice.len();
       Key { id, size }
     }
-    fn size_bytes(&self) -> usize {
+    fn size_of_pointed_to(&self) -> usize {
       self.size
     }
   }
@@ -316,7 +317,8 @@ mod tests {
     assert_eq!(None, allocator.retrieve(&key));
     assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));
 
-    let ret_bytes = allocator.allocate(source_bytes)?;
+    let (ret_bytes, ret_key) = allocator.allocate(source_bytes)?;
+    assert_eq!(ret_key, key);
     assert_eq!(source_bytes, ret_bytes);
     assert_ne!(source_bytes.as_ptr(), ret_bytes.as_ptr());
 

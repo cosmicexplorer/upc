@@ -1,7 +1,7 @@
 /* From https://gist.github.com/garcia556/8231e844a90457c99cc72e5add8388e4!! */
-use super::mmap_bindings::{self, key_t, size_t, IPC_CREAT, IPC_R, IPC_RMID, IPC_W};
+use super::mmap_bindings::{self, key_t, size_t, IPC_CREAT, IPC_EXCL, IPC_R, IPC_RMID, IPC_W};
 
-use intrusive_table::{self, IntrusiveTable};
+use intrusive_table::{self, IntrusiveAllocator, IntrusiveTable};
 
 use hashing::{Digest, Fingerprint};
 
@@ -14,7 +14,6 @@ use std::default::Default;
 use std::ffi::CString;
 use std::io;
 use std::mem;
-use std::ops::{Deref, DerefMut};
 use std::os;
 use std::ptr;
 use std::slice;
@@ -25,7 +24,7 @@ pub type SizeType = u64;
 
 /* Randomly generated, intended to be unique but also static across compiled versions of the
  * library. */
-pub const UPC_SHM_KEY: key_t = 0x47d0ff312d99;
+pub const UPC_SHM_KEY: key_t = 0xf312d98;
 pub const DEFAULT_SHM_REGION_SIZE: usize = 2_000_000; /* 2MB */
 
 lazy_static! {
@@ -33,8 +32,8 @@ lazy_static! {
     let ret = RawShmHandle::new(UPC_SHM_KEY, DEFAULT_SHM_REGION_SIZE).unwrap();
     Arc::new(RwLock::new(ret))
   };
-  static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle>>> = {
-    let mut map: HashMap<ShmKey, ShmHandle> = HashMap::new();
+  static ref IN_PROCESS_SHM_MAPPINGS: Arc<RwLock<HashMap<ShmKey, ShmHandle<'static>>>> = {
+    let mut map: HashMap<ShmKey, ShmHandle<'static>> = HashMap::new();
     /* Insert a special case for the empty digest. */
     map.insert(ShmKey::default(), ShmHandle::default());
     Arc::new(RwLock::new(map))
@@ -74,34 +73,67 @@ impl From<intrusive_table::Error> for ShmError {
 }
 
 struct RawShmHandle {
-  full_shm_region_size: usize,
   mmap_addr: *mut os::raw::c_void,
-  key: key_t,
   shared_memory_identifier: os::raw::c_int,
+  pub allocator: IntrusiveAllocator<'static, ShmKey>,
 }
+unsafe impl Send for RawShmHandle {}
+unsafe impl Sync for RawShmHandle {}
 
 impl RawShmHandle {
   pub fn new(key: key_t, full_shm_region_size: usize) -> Result<Self, ShmError> {
     /* Get an identifier for the shared memory region, which can then be mapped into the process
      * address space. The region may exist already. If the region exists already and the requested
      * size is greater than the region's size, there should be an error. See `man shmget`. */
-    let fd_perm = IPC_R | IPC_W | IPC_CREAT;
-    let shared_memory_identifier: os::raw::c_int = unsafe {
-      let fd = mmap_bindings::shmget(
+    let (shared_memory_identifier, did_create): (os::raw::c_int, bool) = unsafe {
+      let mut did_create: bool = false;
+      let mut fd = mmap_bindings::shmget(
         key,
         full_shm_region_size as size_t,
-        fd_perm as os::raw::c_int,
+        /* Do the first run without IPC_CREAT. */
+        (IPC_R | IPC_W) as os::raw::c_int,
       );
       if fd == -1 {
-        return Err(format!("failed to open SHM: {:?}", io::Error::last_os_error()).into());
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::NotFound {
+          /* The first attempt to get the shared memory region failed without being found. Try
+           * again to create it, exclusively. */
+          fd = mmap_bindings::shmget(
+            key,
+            full_shm_region_size as size_t,
+            /* Do the second run with IPC_CREAT and IPC_EXCL. */
+            (IPC_R | IPC_W | IPC_CREAT | IPC_EXCL) as os::raw::c_int,
+          );
+          if fd == -1 {
+            /* Either we have actually provided an invalid shm request, or another process created
+             * the shm region with IPC_EXCL just before we did. Either way, just error out at this
+             * point. */
+            return Err(
+              format!(
+                "failed to open SHM (with IPC_CREAT,IPC_EXCL): {:?}",
+                io::Error::last_os_error()
+              )
+              .into(),
+            );
+          }
+          did_create = true;
+        } else {
+          /* If the errno was not ENOENT. */
+          return Err(format!("failed to open SHM: {:?}", io::Error::last_os_error()).into());
+        }
       }
-      fd
+      (fd, did_create)
     };
+
     /* Map the shared memory region into the current process's address space. This region may or
      * may not already be initialized. */
     let shmat_prot = 0; /* We want to read and write to this memory. */
     let mmap_addr: *mut os::raw::c_void = unsafe {
-      let addr = mmap_bindings::shmat(shm_fd, ptr::null(), shmat_prot as os::raw::c_int);
+      let addr = mmap_bindings::shmat(
+        shared_memory_identifier,
+        ptr::null(),
+        shmat_prot as os::raw::c_int,
+      );
       if addr == MAP_FAILED() {
         return Err(
           format!(
@@ -114,19 +146,30 @@ impl RawShmHandle {
       }
       addr
     };
-    /* FIXME: initialize the intrusive hash table!!! */
+
+    let sliced = unsafe {
+      let ptr = mem::transmute::<*mut os::raw::c_void, *mut u8>(mmap_addr);
+      slice::from_raw_parts_mut(ptr, full_shm_region_size)
+    };
+    let mut allocator = IntrusiveAllocator::<'static, ShmKey>::allocator_within_region(sliced);
+    /* If we created this shared memory region, initialize it as empty. */
+    /* TODO: there are several remaining concurrency bugs here. It's probably fine for now as this
+     * initialization only occurs once at program startup. */
+    if did_create {
+      allocator.erase_all();
+    }
+
     Ok(RawShmHandle {
-      full_shm_region_size,
       mmap_addr,
-      key,
       shared_memory_identifier,
+      allocator,
     })
   }
 
   /* Note: this destroys the mapping for every other process too! This should only be used to free
    * up memory, but even then, it's likely too many shared mappings will just end up getting paged
    * to disk. Hence only being on for testing! */
-  #[cfg(test)]
+  #[allow(dead_code)]
   pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
     /* Unmap the shared memory region from the process address space. */
     let mut rc = unsafe { mmap_bindings::shmdt(self.mmap_addr) };
@@ -154,30 +197,6 @@ impl RawShmHandle {
   }
 }
 
-impl Deref for RawShmHandle {
-  type Target = [u8];
-
-  fn deref(&self) -> &[u8] {
-    unsafe {
-      slice::from_raw_parts(
-        mem::transmute::<*mut os::raw::c_void, *const u8>(self.mmap_addr),
-        self.full_shm_region_size,
-      )
-    }
-  }
-}
-
-impl DerefMut for RawShmHandle {
-  fn deref_mut(&mut self) -> &mut [u8] {
-    unsafe {
-      slice::from_raw_parts_mut(
-        mem::transmute::<*mut os::raw::c_void, *mut u8>(self.mmap_addr),
-        self.full_shm_region_size,
-      )
-    }
-  }
-}
-
 /* FFI!!!! */
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -191,17 +210,16 @@ impl Default for ShmKey {
   }
 }
 
-/* impl From<ShmKey> for key_t { */
-/*   fn from(value: ShmKey) -> Self { */
-/*     use std::collections::hash_map::DefaultHasher; */
-/*     use std::hash::{Hash, Hasher}; */
-
-/*     let mut hasher = DefaultHasher::new(); */
-/*     Hash::hash(&value, &mut hasher); */
-
-/*     hasher.finish() as key_t */
-/*   } */
-/* } */
+impl intrusive_table::AllocationDescriptor for ShmKey {
+  fn digest(slice: &[u8]) -> Self {
+    let digest = Digest::of_bytes(slice);
+    let key: ShmKey = digest.into();
+    key
+  }
+  fn size_of_pointed_to(&self) -> usize {
+    self.size_bytes as usize
+  }
+}
 
 impl From<Digest> for ShmKey {
   fn from(digest: Digest) -> Self {
@@ -442,64 +460,27 @@ impl Default for ShmDeleteResult {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct ShmHandle {
-  key: ShmKey,
-  mmap_addr: *mut os::raw::c_void,
+struct ShmHandle<'a> {
+  pub key: ShmKey,
+  pub data: &'a [u8],
 }
-impl Default for ShmHandle {
+impl<'a> Default for ShmHandle<'a> {
   fn default() -> Self {
     ShmHandle {
       key: ShmKey::default(),
-      size_bytes: 0,
-      mmap_addr: ptr::null_mut(),
-      shared_memory_identifier: -1,
+      data: &[],
     }
   }
 }
 
-unsafe impl Send for ShmHandle {}
-unsafe impl Sync for ShmHandle {}
-
-impl ShmHandle {
-  pub fn get_key(&self) -> ShmKey {
-    self.key
-  }
-
-  pub fn get_base_address(&self) -> *const os::raw::c_void {
-    self.mmap_addr
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.key.size_bytes == 0
+impl<'a> ShmHandle<'a> {
+  pub unsafe fn get_base_address(&self) -> *const os::raw::c_void {
+    mem::transmute::<*const u8, *const os::raw::c_void>(self.data.as_ptr())
   }
 }
 
-impl Deref for ShmHandle {
-  type Target = [u8];
-
-  fn deref(&self) -> &[u8] {
-    unsafe {
-      slice::from_raw_parts(
-        mem::transmute::<*mut os::raw::c_void, *const u8>(self.mmap_addr),
-        self.size_bytes as usize,
-      )
-    }
-  }
-}
-
-impl DerefMut for ShmHandle {
-  fn deref_mut(&mut self) -> &mut [u8] {
-    unsafe {
-      slice::from_raw_parts_mut(
-        mem::transmute::<*mut os::raw::c_void, *mut u8>(self.mmap_addr),
-        self.size_bytes as usize,
-      )
-    }
-  }
-}
-
-impl ShmHandle {
-  fn validate_digest(&self, key: ShmKey, source: *const os::raw::c_void) -> Result<(), ShmError> {
+impl<'a> ShmHandle<'a> {
+  fn validate_digest(key: ShmKey, source: *const os::raw::c_void) -> Result<(), ShmError> {
     let source_slice: &[u8] = unsafe {
       slice::from_raw_parts(
         mem::transmute::<*const os::raw::c_void, *const u8>(source),
@@ -514,108 +495,65 @@ impl ShmHandle {
     }
   }
 
-  fn validate_digest_and_write_bytes_to_destination(
-    &mut self,
-    key: ShmKey,
-    source: *const os::raw::c_void,
-  ) -> Result<(), ShmError> {
-    self.validate_digest(key, source)?;
-
-    let source_slice: &[u8] = unsafe {
-      slice::from_raw_parts(
-        mem::transmute::<*const os::raw::c_void, *const u8>(source),
-        key.size_bytes as usize,
-      )
-    };
-    let destination: &mut [u8] = &mut *self;
-    destination.copy_from_slice(source_slice);
-    Ok(())
-  }
-
   pub fn new(request: ShmRequest) -> Result<Self, ShmError> {
     let ShmRequest {
       key,
       creation_behavior,
     } = request;
+    /* Validate the digest of the requested byte slice before doing anything else, if present. */
+    match creation_behavior {
+      CreationBehavior::CreateNew(source) => {
+        Self::validate_digest(key, source)?;
+      }
+      CreationBehavior::DoNotCreateNew => (),
+    }
 
+    /* See if we've already mapped this key in this process's memory before. */
     let maybe_existing_handle: Option<ShmHandle> = {
-      let mappings = (*IN_PROCESS_SHM_MAPPINGS).read();
+      let mappings = IN_PROCESS_SHM_MAPPINGS.read();
       mappings.get(&key).cloned()
     };
     if let Some(existing_handle) = maybe_existing_handle {
-      match creation_behavior {
-        _ if existing_handle.is_empty() => Ok(existing_handle),
-        CreationBehavior::CreateNew(source) => {
-          /* We validate the digest here only because we know the segment was already created and
-           * should have exactly the right bytes! */
-          existing_handle.validate_digest(key, source)?;
-          Ok(existing_handle)
-        }
-        CreationBehavior::DoNotCreateNew => Ok(existing_handle),
-      }
+      Ok(existing_handle)
     } else {
-      let fd_perm = IPC_R
-        | IPC_W
-        | match creation_behavior {
-          CreationBehavior::CreateNew(_) => IPC_CREAT,
-          CreationBehavior::DoNotCreateNew => 0,
-        };
-      let shm_address_key: key_t = key.into();
-
-      let shm_fd = unsafe {
-        let fd = mmap_bindings::shmget(
-          shm_address_key,
-          key.size_bytes as size_t,
-          fd_perm as os::raw::c_int,
-        );
-        if fd == -1 {
-          let errno = io::Error::last_os_error();
-          match (creation_behavior, errno.kind()) {
-            (CreationBehavior::DoNotCreateNew, io::ErrorKind::NotFound) => {
-              eprintln!("fd for shm key {:?} did not exist", key);
-              return Err(ShmError::MappingDidNotExist);
-            }
-            _ => {
-              let message = format!(
-                "failed to open SHM with creation behavior {:?}: {:?}",
-                creation_behavior, errno,
-              );
-              return Err(message.into());
-            }
+      /* Since it wasn't in this process's cache (hasn't been mapped by this process yet), attempt
+       * to retrieve it from the inter-process shm cache. */
+      let result: Result<ShmHandle, _> = match creation_behavior {
+        CreationBehavior::CreateNew(source) => {
+          let sliced = unsafe {
+            let ptr = mem::transmute::<*const os::raw::c_void, *const u8>(source);
+            slice::from_raw_parts(ptr, key.size_bytes as usize)
+          };
+          let mut raw = UPC_RAW_SHM_HANDLE.write();
+          let (ret_key, shared_mapping) = raw.allocator.allocate(sliced)?;
+          assert_eq!(*ret_key, key);
+          Ok(ShmHandle {
+            key,
+            data: unsafe { mem::transmute::<&[u8], &'static [u8]>(shared_mapping) },
+          })
+        }
+        CreationBehavior::DoNotCreateNew => {
+          let raw = UPC_RAW_SHM_HANDLE.read();
+          if let Some(shared_mapping) = raw.allocator.retrieve(&key) {
+            Ok(ShmHandle {
+              key,
+              data: unsafe { mem::transmute::<&[u8], &'static [u8]>(shared_mapping) },
+            })
+          } else {
+            Err(ShmError::MappingDidNotExist)
           }
         }
-        fd
       };
-
-      let shmat_prot = 0;
-      let mmap_addr = unsafe {
-        let addr = mmap_bindings::shmat(shm_fd, ptr::null(), shmat_prot as os::raw::c_int);
-        if addr == MAP_FAILED() {
-          let err = io::Error::last_os_error();
-          return Err(format!("failed to mmap SHM at fd {:?}: {:?}", shm_fd, err).into());
-        }
-        addr
-      };
-
-      let mut result = ShmHandle {
-        key,
-        size_bytes: key.size_bytes as usize,
-        mmap_addr,
-        shared_memory_identifier: shm_fd,
-      };
-
-      match creation_behavior {
-        CreationBehavior::CreateNew(source) => {
-          /* Ensure we actually write the content to the shared memory region, when we allocate
-           * it. */
-          result.validate_digest_and_write_bytes_to_destination(key, source)?;
-        }
-        CreationBehavior::DoNotCreateNew => (),
-      }
-
-      (*IN_PROCESS_SHM_MAPPINGS).write().insert(key, result);
-      Ok(result)
+      let handle = result?;
+      IN_PROCESS_SHM_MAPPINGS.write().insert(key, handle);
+      Ok(handle)
     }
+  }
+
+  pub fn destroy_mapping(&mut self) -> Result<(), ShmError> {
+    IN_PROCESS_SHM_MAPPINGS.write().remove(&self.key).unwrap();
+    UPC_RAW_SHM_HANDLE.write().allocator.delete(&self.key)?;
+    Ok(())
   }
 }
 
