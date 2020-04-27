@@ -44,7 +44,7 @@ trait VirtualizationImplementation {
 }
 
 
-trait MainWrapper extends VirtualizationImplementation {
+object MainWrapperEnvVars {
   val VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR = "UPC_VFS_FILE_MAPPING_FINGERPRINT"
   val VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR = "UPC_VFS_FILE_MAPPING_SIZE_BYTES"
 
@@ -53,6 +53,10 @@ trait MainWrapper extends VirtualizationImplementation {
   val SUBPROCESS_REQUEST_ID_ENV_VAR = "UPC_SUBPROCESS_REQUEST_ID"
 
   val EXECUTOR_NUM_THREADS_ENV_VAR = "UPC_EXECUTOR_NUM_THREADS"
+}
+
+trait MainWrapper extends VirtualizationImplementation {
+  import MainWrapperEnvVars._
 
   override lazy val ioLayer: VirtualIOLayer = VirtualIOLayer
 
@@ -94,7 +98,7 @@ trait MainWrapper extends VirtualizationImplementation {
     val result: CompleteVirtualizedProcessResult = Await.result(f, Duration.Inf)
     val reapResult = thriftscala.ProcessReapResult(
       exeResult = Some(result.toThrift),
-      id = Some(subprocessRequestId),
+      id = Some(SubprocessRequestId(subprocessRequestId).toThrift),
     )
     val () = Await.result(client.reapProcess(reapResult), Duration.Inf)
     result.exitCode
@@ -116,6 +120,3 @@ trait MainWrapper extends VirtualizationImplementation {
     context.exit(exitCode)
   }
 }
-// This is exposed so that the server can peak into the environment variable strings that the
-// client's using here.
-private[upc] object MainWrapper

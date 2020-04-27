@@ -1,7 +1,6 @@
 package upc.local.virtual_cli.server
 
 import com.google.inject.Module
-import com.twitter.finagle.Service
 import com.twitter.finatra.thrift.ThriftServer
 import com.twitter.finatra.thrift.routing.ThriftRouter
 

@@ -87,7 +87,7 @@ object ViaThrift {
       val thriftscala.SubprocessRequestId(Some(id)) = thrift
       SubprocessRequestId(id)
     }
-    def toThrift(self: SubprocessRequestId): thriftscala.SubprocessRequestId = Try {
+    def toThrift(self: SubprocessRequestId): thriftscala.SubprocessRequestId = {
       val SubprocessRequestId(id) = self
       thriftscala.SubprocessRequestId(Some(id))
     }

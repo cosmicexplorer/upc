@@ -3,13 +3,13 @@ package upc.local.virtual_cli.server
 import upc.local._
 import upc.local.directory._
 import upc.local.memory._
-import upc.local.thrift.ViaThrift
 import upc.local.thrift.ViaThrift._
 import upc.local.thriftscala.{process_execution => thriftscala}
-import upc.local.virtual_cli.client.MainWrapper
+import upc.local.virtual_cli.client.MainWrapperEnvVars
 
 import com.twitter.finatra.thrift.Controller
-import com.twitter.util.{Future, FuturePool, Promise}
+import com.twitter.inject.Logging
+import com.twitter.util.{Future, FuturePool, Promise, Try}
 import com.twitter.scrooge.{Request, Response}
 
 import java.util.UUID
@@ -22,8 +22,9 @@ case class DaemonExecuteProcessRequest(inner: thriftscala.ReducedExecuteProcessR
 case class DaemonExecuteProcessResult(exitCode: Int, stdout: String, stderr: String)
 
 
-class ProcessExecutionController extends Controller(ProcessExecutionService) {
-  import ProcessExecutionService._
+class ProcessExecutionController extends Controller(thriftscala.ProcessExecutionService)
+    with Logging {
+  import thriftscala.ProcessExecutionService._
 
   val liveDaemonExecuteProcesses: mutable.Set[DaemonExecuteProcessRequest] = mutable.Set.empty
 
@@ -37,7 +38,7 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
       // If there is *no* existing daemon process matching this request (or if there was previously,
       // but it has since exited for whatever reason), execute the request!
       if (!liveDaemonExecuteProcesses.contains(req)) {
-        liveDaemonExecuteProcesses.addOne(req)
+        liveDaemonExecuteProcesses += req
 
         val DaemonExecuteProcessRequest(inner) = req
         val builder = Process(
@@ -45,21 +46,21 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
           cwd = None,
           extraEnv=(inner.env.getOrElse(Map.empty).toSeq):_*)
         val logger = ProcessLogger { logLine =>
-          log(s"LOG: $logLine (from daemon process $req)")
+          info(s"LOG: $logLine (from daemon process $req)")
         }
 
         val executeProcess: Future[Unit] = FuturePool.unboundedPool {
           val exitCode = builder.run(logger).exitValue()
-          log(s"EXIT: code: $exitCode for daemon process $req")
+          debug(s"EXIT: code: $exitCode for daemon process $req")
         }.ensure {
           liveDaemonExecuteProcesses.synchronized {
-            liveDaemonExecuteProcesses.subtractOne(req)
+            liveDaemonExecuteProcesses -= req
           }
         }
 
-        log(s"scheduled daemon process execution for $req at $executeProcess")
+        debug(s"scheduled daemon process execution for $req at $executeProcess")
       } else {
-        log(s"daemon process execution already existed for $req! reusing!")
+        debug(s"daemon process execution already existed for $req! reusing!")
       }
     }
   }
@@ -74,11 +75,11 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
     val requestId = SubprocessRequestId(UUID.randomUUID().toString)
 
     val env = req.env.getOrElse(Map.empty) ++ Seq(
-      (MainWrapper.VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR -> vfsDigest.digest.fingerprintHex),
-      (MainWrapper.VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR -> vfsDigest.digest.length),
-      (MainWrapper.PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR ->
+      (MainWrapperEnvVars.VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR -> vfsDigest.digest.fingerprintHex),
+      (MainWrapperEnvVars.VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR -> vfsDigest.digest.length.toString),
+      (MainWrapperEnvVars.PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR ->
         ProcessExecutionServer.defaultThriftPortNum.toString),
-      (MainWrapper.SUBPROCESS_REQUEST_ID_ENV_VAR -> requestId.inner),
+      (MainWrapperEnvVars.SUBPROCESS_REQUEST_ID_ENV_VAR -> requestId.inner),
     )
 
     val builder = Process(
@@ -86,7 +87,7 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
       cwd = None,
       extraEnv=(env.toSeq):_*)
     val logger = ProcessLogger { logLine =>
-      log(s"LOG(SUBPROC): uncaptured $logLine from subprocess $req (this means the virtualization layer is failing!!)")
+      warn(s"LOG(SUBPROC): uncaptured $logLine from subprocess $req (this means the virtualization layer is failing!!)")
     }
 
     val promise: Promise[CompleteVirtualizedProcessResult] = Promise()
@@ -96,10 +97,10 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
 
     val executeProcess: Future[Unit] = FuturePool.unboundedPool {
       val exitCode = builder.run(logger).exitValue()
-      log(s"EXIT(SUBPROC): code: $exitCode for subprocess $req")
+      debug(s"EXIT(SUBPROC): code: $exitCode for subprocess $req")
     }
     executeProcess
-      .flatMap(() => promise)
+      .flatMap(Unit => promise)
   }
 
   def getCattedOutput(keys: Seq[ShmKey]): Try[ShmKey] = Try {
@@ -154,7 +155,7 @@ class ProcessExecutionController extends Controller(ProcessExecutionService) {
     val id = result.id.get.fromThrift().get
     val promise = liveSubprocesses.synchronized {
       val ret = liveSubprocesses(id)
-      liveSubprocesses.subtractOne(id)
+      liveSubprocesses -= id
       ret
     }
     promise.setValue(exeResult)

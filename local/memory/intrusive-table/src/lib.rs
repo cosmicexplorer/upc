@@ -317,8 +317,8 @@ mod tests {
     assert_eq!(None, allocator.retrieve(&key));
     assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));
 
-    let (ret_bytes, ret_key) = allocator.allocate(source_bytes)?;
-    assert_eq!(ret_key, key);
+    let (ret_key, ret_bytes) = allocator.allocate(source_bytes)?;
+    assert_eq!(*ret_key, key);
     assert_eq!(source_bytes, ret_bytes);
     assert_ne!(source_bytes.as_ptr(), ret_bytes.as_ptr());
 

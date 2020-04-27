@@ -4,7 +4,7 @@ scala_library(
     '3rdparty/jvm:finatra-thrift',
     'local',
     'local/src/thrift',
-    'local/src/via-thrift',
+    'local/src/thrift:via-thrift',
     'local/virtual-cli/client',
     'local/directory',
     'local/memory',
