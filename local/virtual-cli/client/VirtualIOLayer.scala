@@ -34,10 +34,10 @@ case class VirtualizedProcessExit(
 
 
 class VirtualIOAdaptor(ioServices: IOServices, val vfs: VFSImpl)
-    extends Exitable[VirtualizedProcessExit, CompleteVirtualizedProcessResult] {
+    extends Exitable[VirtualizedProcessExit, ExecuteProcessResult] {
   val Implicits = vfs.VFSImplicitDefs
 
-  override def exit(res: VirtualizedProcessExit): Future[CompleteVirtualizedProcessResult] = {
+  override def exit(res: VirtualizedProcessExit): Future[ExecuteProcessResult] = {
     val VirtualizedProcessExit(exitCode, stdioResults) = res
     ioServices.reapProcess(exitCode, stdioResults, vfs.currentFileMapping)
   }
@@ -79,7 +79,7 @@ case class IOLayerConfig(
 
 class VirtualIOLayer
     extends Setupable[IOLayerConfig]
-    with Exitable[VirtualizedProcessExit, CompleteVirtualizedProcessResult] {
+    with Exitable[VirtualizedProcessExit, ExecuteProcessResult] {
 
   private val executorCell: LazyRefCell[ExecutionContext] = LazyRefCell.empty
   private def initializeExecutor(otherExecutor: ExecutionContext): Unit = {
@@ -103,7 +103,7 @@ class VirtualIOLayer
       .map(initializeVirtualIOAdaptor(_))
   }
 
-  override def exit(result: VirtualizedProcessExit): Future[CompleteVirtualizedProcessResult] =
+  override def exit(result: VirtualizedProcessExit): Future[ExecuteProcessResult] =
     virtualIOAdaptor.exit(result)
 }
 object VirtualIOLayer extends VirtualIOLayer

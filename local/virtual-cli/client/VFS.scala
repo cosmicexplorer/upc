@@ -5,7 +5,7 @@ import upc.local.memory.MemoryMapping
 
 import ammonite.ops._
 
-import java.io.{IOException, Closeable, ByteArrayOutputStream}
+import java.io.{IOException, Closeable, ByteArrayOutputStream, OutputStream => JavaOutputStream}
 import scala.collection.mutable
 import scala.util.Try
 
@@ -65,6 +65,13 @@ trait VFSImplicits { self: VFS =>
       private def asPath: Path = pathConverter.asPath(pathLike)
       def locateReadableStream(): Readable = openFileRead(asPath).map(asReadableFile(_)).get
       def locateWritableStream(): Writable = openFileWrite(asPath).map(asWritableFile(_)).get
+    }
+
+    implicit class ReadableStreamWrapper(readable: Readable) {
+      def pipe(out: JavaOutputStream): Unit = {
+        out.write(readable.readAll())
+        out.close()
+      }
     }
   }
 }

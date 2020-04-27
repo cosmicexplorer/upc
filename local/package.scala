@@ -8,7 +8,8 @@ import scala.util.Try
 sealed abstract class EncodingError(message: String) extends IOException(message)
 case class BadDigest(message: String) extends EncodingError(message)
 
-
+
+// Memory and VFS
 case class Digest(fingerprint: Array[Byte], length: Long) {
   if (fingerprint.length != 32) {
     throw BadDigest(s"invalid fingerprint: must be 32 bytes (was: $fingerprint)")
@@ -41,16 +42,32 @@ object Digest {
   def empty: Digest = fromFingerprintHex(EMPTY_FINGERPRINT, 0).get
 }
 
+case class DirectoryDigest(digest: Digest)
 
+case class ShmKey(digest: Digest)
+
+
+// Process Execution
 case class PathGlobs(
   include: Seq[String],
   exclude: Seq[String],
 )
 
+case class ReducedExecuteProcessRequest(
+  argv: Seq[String],
+  env: Map[String, String],
+  inputFiles: Option[DirectoryDigest],
+)
 
-case class DirectoryDigest(digest: Digest)
+case class BasicExecuteProcessRequest(
+  baseRequest: ReducedExecuteProcessRequest,
+  outputGlobs: Option[PathGlobs],
+)
 
-case class ShmKey(digest: Digest)
+case class VirtualizedExecuteProcessRequest(
+  conjoinedRequests: Seq[BasicExecuteProcessRequest],
+  daemonExecutionRequest: Option[ReducedExecuteProcessRequest],
+)
 
 case class IOFinalState(
   vfsDigest: DirectoryDigest,
@@ -60,9 +77,14 @@ case class IOFinalState(
 
 case class ExitCode(code: Int)
 
-case class CompleteVirtualizedProcessResult(
+case class ExecuteProcessResult(
   exitCode: ExitCode,
   ioState: IOFinalState,
 )
 
 case class SubprocessRequestId(inner: String)
+
+case class ProcessReapResult(
+  exeResult: ExecuteProcessResult,
+  id: SubprocessRequestId,
+)

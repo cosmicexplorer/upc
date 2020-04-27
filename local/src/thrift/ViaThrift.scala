@@ -45,20 +45,106 @@ object ViaThrift {
     )
   }
 
+  implicit object PathGlobsViaThrift extends ViaThrift[thriftscala.PathGlobs, PathGlobs] {
+    def fromThrift(thrift: thriftscala.PathGlobs): Try[PathGlobs] = Try {
+      val thriftscala.PathGlobs(Some(includeGlobs), Some(excludeGlobs)) = thrift
+      PathGlobs(
+        include = includeGlobs,
+        exclude = excludeGlobs)
+    }
+    def toThrift(self: PathGlobs): thriftscala.PathGlobs = {
+      val PathGlobs(include, exclude) = self
+      thriftscala.PathGlobs(
+        includeGlobs = Some(include),
+        excludeGlobs = Some(exclude),
+      )
+    }
+  }
+
+  implicit object ReducedExecuteProcessRequestViaThrift
+      extends ViaThrift[thriftscala.ReducedExecuteProcessRequest, ReducedExecuteProcessRequest] {
+    def fromThrift(
+      thrift: thriftscala.ReducedExecuteProcessRequest,
+    ): Try[ReducedExecuteProcessRequest] = Try {
+      val thriftscala.ReducedExecuteProcessRequest(Some(argv), env, inputFiles) = thrift
+      ReducedExecuteProcessRequest(
+        argv = argv,
+        env = env.map(_.toMap).getOrElse(Map.empty),
+        inputFiles = inputFiles.map(_.fromThrift().get),
+      )
+    }
+    def toThrift(self: ReducedExecuteProcessRequest): thriftscala.ReducedExecuteProcessRequest = {
+      val ReducedExecuteProcessRequest(argv, env, inputFiles) = self
+      thriftscala.ReducedExecuteProcessRequest(
+        argv = Some(argv),
+        env = Some(env),
+        inputFiles = inputFiles.map(_.toThrift),
+      )
+    }
+  }
+
+  implicit object BasicExecuteProcessRequestViaThrift
+      extends ViaThrift[thriftscala.BasicExecuteProcessRequest, BasicExecuteProcessRequest] {
+    def fromThrift(
+      thrift: thriftscala.BasicExecuteProcessRequest,
+    ): Try[BasicExecuteProcessRequest] = Try {
+      val thriftscala.BasicExecuteProcessRequest(Some(baseRequest), outputGlobs) = thrift
+      BasicExecuteProcessRequest(
+        baseRequest = baseRequest.fromThrift().get,
+        outputGlobs = outputGlobs.map(_.fromThrift().get),
+      )
+    }
+    def toThrift(self: BasicExecuteProcessRequest): thriftscala.BasicExecuteProcessRequest = {
+      val BasicExecuteProcessRequest(baseRequest, outputGlobs) = self
+      thriftscala.BasicExecuteProcessRequest(
+        baseRequest = Some(baseRequest.toThrift),
+        outputGlobs = outputGlobs.map(_.toThrift),
+      )
+    }
+  }
+
+  implicit object VirtualizedExecuteProcessRequestViaThrift
+      extends ViaThrift[
+    thriftscala.VirtualizedExecuteProcessRequest,
+    VirtualizedExecuteProcessRequest,
+  ] {
+    def fromThrift(
+      thrift: thriftscala.VirtualizedExecuteProcessRequest,
+    ): Try[VirtualizedExecuteProcessRequest] = Try {
+      val thriftscala.VirtualizedExecuteProcessRequest(
+        Some(conjoinedRequests),
+        daemonExecutionRequest,
+      ) = thrift
+      VirtualizedExecuteProcessRequest(
+        conjoinedRequests = conjoinedRequests.map(_.fromThrift().get),
+        daemonExecutionRequest = daemonExecutionRequest.map(_.fromThrift().get),
+      )
+    }
+    def toThrift(
+      self: VirtualizedExecuteProcessRequest,
+    ): thriftscala.VirtualizedExecuteProcessRequest = {
+      val VirtualizedExecuteProcessRequest(conjoinedRequests, daemonExecutionRequest) = self
+      thriftscala.VirtualizedExecuteProcessRequest(
+        conjoinedRequests = Some(conjoinedRequests.map(_.toThrift)),
+        daemonExecutionRequest = daemonExecutionRequest.map(_.toThrift),
+      )
+    }
+  }
+
   implicit object ProcessResultViaThrift extends ViaThrift[
     thriftscala.ExecuteProcessResult,
-    CompleteVirtualizedProcessResult,
+    ExecuteProcessResult,
   ] {
     def fromThrift(
       thrift: thriftscala.ExecuteProcessResult,
-    ): Try[CompleteVirtualizedProcessResult] = Try {
+    ): Try[ExecuteProcessResult] = Try {
       val thriftscala.ExecuteProcessResult(
         Some(exitCode),
         Some(stdout),
         Some(stderr),
         Some(digest),
       ) = thrift
-      CompleteVirtualizedProcessResult(
+      ExecuteProcessResult(
         exitCode = ExitCode(exitCode),
         ioState = IOFinalState(
           vfsDigest = digest.fromThrift().get,
@@ -67,8 +153,8 @@ object ViaThrift {
         ),
       )
     }
-    def toThrift(self: CompleteVirtualizedProcessResult): thriftscala.ExecuteProcessResult = {
-      val CompleteVirtualizedProcessResult(
+    def toThrift(self: ExecuteProcessResult): thriftscala.ExecuteProcessResult = {
+      val ExecuteProcessResult(
         ExitCode(exitCode),
         IOFinalState(digest, stdout, stderr),
       ) = self
@@ -90,6 +176,24 @@ object ViaThrift {
     def toThrift(self: SubprocessRequestId): thriftscala.SubprocessRequestId = {
       val SubprocessRequestId(id) = self
       thriftscala.SubprocessRequestId(Some(id))
+    }
+  }
+
+  implicit object ProcessReapResultViaThrift
+      extends ViaThrift[thriftscala.ProcessReapResult, ProcessReapResult] {
+    def fromThrift(thrift: thriftscala.ProcessReapResult): Try[ProcessReapResult] = Try {
+      val thriftscala.ProcessReapResult(Some(exeResult), Some(id)) = thrift
+      ProcessReapResult(
+        exeResult = exeResult.fromThrift().get,
+        id = id.fromThrift().get
+      )
+    }
+    def toThrift(self: ProcessReapResult): thriftscala.ProcessReapResult = {
+      val ProcessReapResult(exeResult, id) = self
+      thriftscala.ProcessReapResult(
+        exeResult = Some(exeResult.toThrift),
+        id = Some(id.toThrift),
+      )
     }
   }
 }

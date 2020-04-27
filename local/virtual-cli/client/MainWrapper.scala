@@ -23,7 +23,7 @@ trait VirtualizationImplementation {
 
   def withVirtualIOLayer(cwd: Path)(
     runMainMethod: => Int
-  ): Future[CompleteVirtualizedProcessResult] = {
+  ): Future[ExecuteProcessResult] = {
     // Acquire stdio.
     val inMemStdio = InMemoryStdio.acquire()
 
@@ -39,7 +39,7 @@ trait VirtualizationImplementation {
     } yield result
   }
 
-  def mainWrapper(args: Array[String], cwd: Path): Future[CompleteVirtualizedProcessResult] =
+  def mainWrapper(args: Array[String], cwd: Path): Future[ExecuteProcessResult] =
     withVirtualIOLayer(cwd) { virtualizedMainMethod(args) }
 }
 
@@ -88,19 +88,16 @@ trait MainWrapper extends VirtualizationImplementation {
       executor = executor,
     ))
 
-  def withProcessReapClient(f: => Future[CompleteVirtualizedProcessResult]): Try[ExitCode] = Try {
-    val subprocessRequestId = sys.env(SUBPROCESS_REQUEST_ID_ENV_VAR)
+  def withProcessReapClient(f: => Future[ExecuteProcessResult]): Try[ExitCode] = Try {
+    val subprocessRequestId = SubprocessRequestId(sys.env(SUBPROCESS_REQUEST_ID_ENV_VAR))
     val processReapServicePort = sys.env(PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR).toInt
     val client = Thrift.Client().build[
       thriftscala.ProcessExecutionService[Future]
     ](s":$processReapServicePort")
 
-    val result: CompleteVirtualizedProcessResult = Await.result(f, Duration.Inf)
-    val reapResult = thriftscala.ProcessReapResult(
-      exeResult = Some(result.toThrift),
-      id = Some(SubprocessRequestId(subprocessRequestId).toThrift),
-    )
-    val () = Await.result(client.reapProcess(reapResult), Duration.Inf)
+    val result: ExecuteProcessResult = Await.result(f, Duration.Inf)
+    val reapResult = ProcessReapResult(exeResult = result, id = subprocessRequestId)
+    val () = Await.result(client.reapProcess(reapResult.toThrift), Duration.Inf)
     result.exitCode
   }
 

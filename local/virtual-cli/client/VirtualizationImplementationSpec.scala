@@ -38,7 +38,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   }
 
   "The ExampleMain object" should "successfully virtualize its execution" in {
-    val CompleteVirtualizedProcessResult(
+    val ExecuteProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)
     ) = Await.result(ExampleMain.mainWrapper(Array(), pwd), Duration.Inf)
@@ -97,7 +97,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   object ReadWriteMain2 extends ReadWriteMain
 
   "The ReadWriteMain object" should "successfully read and write separate files" in {
-    val CompleteVirtualizedProcessResult(
+    val ExecuteProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)
     ) = Await.result(ReadWriteMain1.mainWrapper(Array("file1.txt", "file2.txt"), pwd), Duration.Inf)
@@ -121,7 +121,7 @@ class VirtualizationImplementationSpec extends FlatSpec with Matchers {
   }
 
   it should "successfully modify the contents of an existing file" in {
-    val CompleteVirtualizedProcessResult(
+    val ExecuteProcessResult(
       ExitCode(exitCode),
       IOFinalState(digest, stdout, stderr)
     ) = Await.result(ReadWriteMain2.mainWrapper(

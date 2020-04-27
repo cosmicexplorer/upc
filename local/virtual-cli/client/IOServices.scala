@@ -78,7 +78,7 @@ class IOServices(cwd: Path, config: IOServicesConfig) {
     exitCode: ExitCode,
     stdioResults: StdioResults,
     fileMapping: FileMapping,
-  ): Future[CompleteVirtualizedProcessResult] = for {
+  ): Future[ExecuteProcessResult] = for {
     ioState <- writeIOState(fileMapping, stdioResults)
-  } yield CompleteVirtualizedProcessResult(exitCode, ioState)
+  } yield ExecuteProcessResult(exitCode, ioState)
 }

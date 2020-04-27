@@ -19,13 +19,12 @@ struct PathGlobs {
 struct ReducedExecuteProcessRequest {
   1: optional list<string> argv,
   2: optional map<string, string> env,
+  3: optional DirectoryDigest input_files,
 }
 
 struct BasicExecuteProcessRequest {
-  1: optional list<string> argv,
-  2: optional map<string, string> env,
-  3: optional DirectoryDigest input_files,
-  4: optional PathGlobs output_globs,
+  1: optional ReducedExecuteProcessRequest base_request,
+  2: optional PathGlobs output_globs,
 }
 
 struct VirtualizedExecuteProcessRequest {

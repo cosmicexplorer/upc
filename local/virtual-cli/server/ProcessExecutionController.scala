@@ -17,7 +17,7 @@ import scala.collection.mutable
 import scala.sys.process.{Process, ProcessLogger}
 
 
-case class DaemonExecuteProcessRequest(inner: thriftscala.ReducedExecuteProcessRequest)
+case class DaemonExecuteProcessRequest(inner: ReducedExecuteProcessRequest)
 
 case class DaemonExecuteProcessResult(exitCode: Int, stdout: String, stderr: String)
 
@@ -30,7 +30,7 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
 
   val liveSubprocesses: mutable.Map[
     SubprocessRequestId,
-    Promise[CompleteVirtualizedProcessResult],
+    Promise[ExecuteProcessResult],
   ] = mutable.Map.empty
 
   def maybeExecuteDaemon(req: DaemonExecuteProcessRequest): Unit = {
@@ -42,9 +42,9 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
 
         val DaemonExecuteProcessRequest(inner) = req
         val builder = Process(
-          command = inner.argv.get,
+          command = inner.argv,
           cwd = None,
-          extraEnv=(inner.env.getOrElse(Map.empty).toSeq):_*)
+          extraEnv=(inner.env.toSeq):_*)
         val logger = ProcessLogger { logLine =>
           info(s"LOG: $logLine (from daemon process $req)")
         }
@@ -66,15 +66,14 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
   }
 
   def executeSubprocess(
-    req: thriftscala.BasicExecuteProcessRequest,
-  ): Future[CompleteVirtualizedProcessResult] = {
-    val vfsDigest = req.inputFiles match {
-      case Some(x) => x.fromThrift().get
-      case None => DirectoryDigest(Digest.empty)
-    }
+    request: BasicExecuteProcessRequest,
+  ): Future[ExecuteProcessResult] = {
+    // FIXME: incorporate PathGlobs into subprocess output!!
+    val BasicExecuteProcessRequest(req, _outputGlobs) = request
+    val vfsDigest = req.inputFiles.getOrElse(DirectoryDigest(Digest.empty))
     val requestId = SubprocessRequestId(UUID.randomUUID().toString)
 
-    val env = req.env.getOrElse(Map.empty) ++ Seq(
+    val env = req.env ++ Seq(
       (MainWrapperEnvVars.VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR -> vfsDigest.digest.fingerprintHex),
       (MainWrapperEnvVars.VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR -> vfsDigest.digest.length.toString),
       (MainWrapperEnvVars.PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR ->
@@ -83,14 +82,14 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
     )
 
     val builder = Process(
-      command = req.argv.get,
+      command = req.argv,
       cwd = None,
       extraEnv=(env.toSeq):_*)
     val logger = ProcessLogger { logLine =>
       warn(s"LOG(SUBPROC): uncaptured $logLine from subprocess $req (this means the virtualization layer is failing!!)")
     }
 
-    val promise: Promise[CompleteVirtualizedProcessResult] = Promise()
+    val promise: Promise[ExecuteProcessResult] = Promise()
     liveSubprocesses.synchronized {
       liveSubprocesses(requestId) = promise
     }
@@ -114,7 +113,7 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
   }
 
   handle(ExecuteProcesses).withFn { request: Request[ExecuteProcesses.Args] =>
-    val req = request.args.executeProcessRequest
+    val req = request.args.executeProcessRequest.fromThrift().get
 
     // If there is a daemon execution request specified, see if it's already running, and start one
     // up if not.
@@ -122,13 +121,13 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
       .map(DaemonExecuteProcessRequest(_))
       .foreach(maybeExecuteDaemon(_))
 
-    val completedProcesses: Future[Seq[CompleteVirtualizedProcessResult]] = Future.collect(
-      req.conjoinedRequests.get.map(executeSubprocess(_)))
+    val completedProcesses: Future[Seq[ExecuteProcessResult]] = Future.collect(
+      req.conjoinedRequests.map(executeSubprocess(_)))
 
     // Concatenate the output streams and merge the directory digests.
     // TODO: allow an interactive/incremental mode with interleaved output, as well as supporting
     // stdin!
-    val mergedResult: Future[CompleteVirtualizedProcessResult] = completedProcesses.map { results =>
+    val mergedResult: Future[ExecuteProcessResult] = completedProcesses.map { results =>
       // Get the first nonzero exit code and use that, otherwise return zero.
       val mergedExitCode: Int = results.map(_.exitCode.code).find(_ != 0).getOrElse(0)
       val cattedStdout: ShmKey = getCattedOutput(results.map(_.ioState.stdout)).get
@@ -136,7 +135,7 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
       val mergedDigests: DirectoryDigest = DirectoryMapping.mergeDigests(
         results.map(_.ioState.vfsDigest)).get
 
-      CompleteVirtualizedProcessResult(
+      ExecuteProcessResult(
         exitCode = ExitCode(mergedExitCode),
         ioState = IOFinalState(
           stdout = cattedStdout,
@@ -150,9 +149,7 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
   }
 
   handle(ReapProcess).withFn { request: Request[ReapProcess.Args] =>
-    val result = request.args.processReapResult
-    val exeResult = result.exeResult.get.fromThrift().get
-    val id = result.id.get.fromThrift().get
+    val ProcessReapResult(exeResult, id) = request.args.processReapResult.fromThrift().get
     val promise = liveSubprocesses.synchronized {
       val ret = liveSubprocesses(id)
       liveSubprocesses -= id

@@ -15,7 +15,19 @@ class ProcessExecutionFeatureTest extends FeatureTest {
 
   // NB: reapProcess is not tested because the return value is void! It will be implicitly tested by
   // running the process executions that are explicitly tested in this file!
-  test("ProcessExecutionServer#execute processes correctly") {
+  test("ProcessExecutionServer#executes a single process correctly") {
+    await(client.executeProcesses(???))
+  }
+
+  test("#executes multiple concurrent processes and cats the stdout") {
+    // write files "a.txt" and "b.txt" into the initial digests, make subprocesses cat them, and
+    // then cat the stdout of those subprocesses.
+    await(client.executeProcesses(???))
+  }
+
+  test("#executes multiple concurrent processes and merges the vfs digests") {
+    // write files "a.txt" and "b.txt" into the initial digests, make subprocesses write to two NEW
+    // files, and then read the merged digest of the output.
     await(client.executeProcesses(???))
   }
 }
