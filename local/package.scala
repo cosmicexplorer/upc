@@ -64,3 +64,5 @@ case class CompleteVirtualizedProcessResult(
   exitCode: ExitCode,
   ioState: IOFinalState,
 )
+
+case class SubprocessRequestId(inner: String)

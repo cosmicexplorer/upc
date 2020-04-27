@@ -50,14 +50,15 @@ trait MainWrapper extends VirtualizationImplementation {
 
   val PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT"
 
+  val SUBPROCESS_REQUEST_ID_ENV_VAR = "UPC_SUBPROCESS_REQUEST_ID"
+
   val EXECUTOR_NUM_THREADS_ENV_VAR = "UPC_EXECUTOR_NUM_THREADS"
 
   override lazy val ioLayer: VirtualIOLayer = VirtualIOLayer
 
   implicit lazy val executor: ExecutionContext = {
     val numThreads: Int = sys.env.get(EXECUTOR_NUM_THREADS_ENV_VAR) match {
-      case None => throw ExecutionContextCreationError(
-        s"env var $EXECUTOR_NUM_THREADS_ENV_VAR was not set!!!")
+      case None => 6
       case Some(numStr) => try {
         numStr.toInt
       } catch {
@@ -84,13 +85,18 @@ trait MainWrapper extends VirtualizationImplementation {
     ))
 
   def withProcessReapClient(f: => Future[CompleteVirtualizedProcessResult]): Try[ExitCode] = Try {
+    val subprocessRequestId = sys.env(SUBPROCESS_REQUEST_ID_ENV_VAR)
     val processReapServicePort = sys.env(PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR).toInt
     val client = Thrift.Client().build[
       thriftscala.ProcessExecutionService[Future]
-    ](processReapServicePort.toString)
+    ](s":$processReapServicePort")
 
-    val result = Await.result(f, Duration.Inf)
-    val () = Await.result(client.reapProcess(result.toThrift), Duration.Inf)
+    val result: CompleteVirtualizedProcessResult = Await.result(f, Duration.Inf)
+    val reapResult = thriftscala.ProcessReapResult(
+      exeResult = Some(result.toThrift),
+      id = Some(subprocessRequestId),
+    )
+    val () = Await.result(client.reapProcess(reapResult), Duration.Inf)
     result.exitCode
   }
 
@@ -110,3 +116,6 @@ trait MainWrapper extends VirtualizationImplementation {
     context.exit(exitCode)
   }
 }
+// This is exposed so that the server can peak into the environment variable strings that the
+// client's using here.
+private[upc] object MainWrapper

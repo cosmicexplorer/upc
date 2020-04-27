@@ -2,7 +2,10 @@ scala_library(
   dependencies=[
     '3rdparty/jvm:finagle-thrift',
     '3rdparty/jvm:finatra-thrift',
+    'local',
     'local/src/thrift',
+    'local/src/via-thrift',
+    'local/virtual-cli/client',
     'local/directory',
     'local/memory',
   ],

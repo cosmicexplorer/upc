@@ -16,6 +16,11 @@ struct PathGlobs {
   2: optional list<string> exclude_globs,
 }
 
+struct ReducedExecuteProcessRequest {
+  1: optional list<string> argv,
+  2: optional map<string, string> env,
+}
+
 struct BasicExecuteProcessRequest {
   1: optional list<string> argv,
   2: optional map<string, string> env,
@@ -27,7 +32,7 @@ struct VirtualizedExecuteProcessRequest {
   // These processes will all succeed or fail as a group, when more than one is requested.
   1: optional list<BasicExecuteProcessRequest> conjoined_requests,
   // This process will be started first, in the background, before any children are created.
-  2: optional BasicExecuteProcessRequest daemon_execution_request,
+  2: optional ReducedExecuteProcessRequest daemon_execution_request,
 }
 
 struct ExecuteProcessResult {
@@ -38,16 +43,8 @@ struct ExecuteProcessResult {
   // TODO: zipkin span id!!
 }
 
-enum ProcessExecutionErrorCode {
-  PROCESS_FAILED = 1,
-  COULD_NOT_LOCATE_INPUT_FILES = 2,
-  INTERNAL_ERROR = 3,
-}
-exception ProcessExecutionError {
-  1: optional ProcessExecutionErrorCode error_code,
-  2: optional string description,
-}
-
+// This is provided to invoked subprocesses via the environment (or something), so that it can be
+// sent back when the process reaps itself.
 struct SubprocessRequestId {
   1: optional string id,
 }
@@ -57,20 +54,10 @@ struct ProcessReapResult {
   2: optional SubprocessRequestId id,
 }
 
-enum ProcessReapErrorCode {
-  PARENT_EXECUTION_NOT_FOUND = 1,
-}
-exception ProcessReapError {
-  1: optional ProcessReapErrorCode error_coode,
-  2: optional string description,
-}
-
 service ProcessExecutionService {
   ExecuteProcessResult executeProcesses(1: VirtualizedExecuteProcessRequest execute_process_request)
-    throws (1: ProcessExecutionError process_execution_error)
 
   // NB: These two methods *would* be in different services, but Finatra only supports a single
   // controller per thrift server, and hence only a single thrift service per server.
   void reapProcess(1: ProcessReapResult process_reap_result)
-    throws (1: ProcessReapError process_reap_error)
 }

@@ -80,4 +80,16 @@ object ViaThrift {
       )
     }
   }
+
+  implicit object SubprocessRequestIdViaThrift
+      extends ViaThrift[thriftscala.SubprocessRequestId, SubprocessRequestId] {
+    def fromThrift(thrift: thriftscala.SubprocessRequestId): Try[SubprocessRequestId] = Try {
+      val thriftscala.SubprocessRequestId(Some(id)) = thrift
+      SubprocessRequestId(id)
+    }
+    def toThrift(self: SubprocessRequestId): thriftscala.SubprocessRequestId = Try {
+      val SubprocessRequestId(id) = self
+      thriftscala.SubprocessRequestId(Some(id))
+    }
+  }
 }

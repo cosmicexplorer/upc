@@ -233,6 +233,13 @@ object Shm {
     res.fromNative().get
   }
 
+  def retrieveBytes(key: ShmKey): Try[Array[Byte]] = Try {
+    val req = ShmRetrieveRequest(key)
+    Shm.retrieve(req).get match {
+      case RetrieveSucceeded(_, source) => source.getBytes
+    }
+  }
+
   def retrieve(request: ShmRetrieveRequest): Try[ShmRetrieveResult] = Try {
     val req = request.intoNative().get
     val res = new LibMemory.ShmRetrieveResult
