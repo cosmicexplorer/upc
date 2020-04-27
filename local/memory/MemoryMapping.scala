@@ -205,7 +205,7 @@ object Shm {
 
   // NB: For when the key is expected to be loaded in memory already. Mainly intended for testing
   // purposes.
-  def keyFor(bytes: Array[Byte]): Try[ShmKey] = Try {
+  private[upc] def keyFor(bytes: Array[Byte]): Try[ShmKey] = Try {
     val mapping = MemoryMapping.fromArray(bytes)
     getKey(ShmGetKeyRequest(mapping)).get
   }

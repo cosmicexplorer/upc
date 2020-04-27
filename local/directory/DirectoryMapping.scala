@@ -16,6 +16,8 @@ case class DirectoryNativeObjectEncodingError(message: String) extends Directory
 sealed abstract class DirectoryExpansionError(message: String) extends DirectoryError(message)
 sealed abstract class DirectoryUploadError(message: String) extends DirectoryError(message)
 
+case class FailedPrecondition(message: String) extends DirectoryError(message)
+
 
 sealed abstract class ExpandDirectoriesResult
 sealed abstract class UploadDirectoriesResult
@@ -26,6 +28,17 @@ case class ChildRelPath(path: RelPath)
 case class FileStat(key: ShmKey, path: ChildRelPath)
 
 case class PathStats(fileStats: Seq[FileStat])
+object PathStats {
+  def apply(fileStats: Seq[FileStat]): PathStats = {
+    val dedupedStats: Seq[FileStat] = fileStats.groupBy(_.path).map {
+      case (path, stats) if stats.toSet.size > 1 => {
+        throw FailedPrecondition(s"path $path in $this was repeated for multiple distinct stats: $stats")
+      }
+      case (path, stats) => stats(0)
+    }.toSeq
+    new PathStats(dedupedStats)
+  }
+}
 
 case class ExpandDirectoriesRequest(digests: Seq[DirectoryDigest])
 
@@ -192,12 +205,14 @@ object DirectoryMapping {
 
   import LibDirectory.instance
 
+  // Convenience wrapper for expand() for the common case of only expanding a single
+  // DirectoryDigest.
   def expandDigest(digest: DirectoryDigest): Try[PathStats] = Try {
     val req = ExpandDirectoriesRequest(Seq(digest))
     val mapping = expand(req).get match {
       case ExpandSucceeded(mapping) => mapping
     }
-    val (_digest, pathStats) = mapping.mapping.toSeq.apply(0)
+    val pathStats = mapping.mapping.values.toSeq.apply(0)
     pathStats
   }
 
@@ -208,12 +223,13 @@ object DirectoryMapping {
     res.fromNative().get
   }
 
+  // Convenience wrapper for upload() for the common case of only uploading a single PathStats.
   def uploadPathStats(pathStats: PathStats): Try[DirectoryDigest] = Try {
     val req = UploadDirectoriesRequest(Seq(pathStats))
     val mapping = upload(req).get match {
       case UploadSucceeded(mapping) => mapping
     }
-    val (digest, _pathStats) = mapping.mapping.toSeq.apply(0)
+    val digest = mapping.mapping.keys.toSeq.apply(0)
     digest
   }
 
@@ -222,5 +238,20 @@ object DirectoryMapping {
     val res = new LibDirectory.UploadDirectoriesResult
     instance.directories_upload(req, res)
     res.fromNative().get
+  }
+
+  // Given several PathStats, ensure that any overlapping files have the exact same content.
+  def mergePathStats(allPathStats: Seq[PathStats]): Try[PathStats] = Try(
+    PathStats(allPathStats.flatMap(_.fileStats)))
+
+  // Expand all the digests, merge the path stats with mergePathStats(), then re-upload the single
+  // merged result.
+  def mergeDigests(allDigests: Seq[DirectoryDigest]): Try[DirectoryDigest] = Try {
+    val req = ExpandDirectoriesRequest(allDigests)
+    val allPathStats: Seq[PathStats] = expand(req).get match {
+      case ExpandSucceeded(ExpandDirectoriesMapping(mapping)) => mapping.values.toSeq
+    }
+    val merged = mergePathStats(allPathStats).get
+    uploadPathStats(merged).get
   }
 }

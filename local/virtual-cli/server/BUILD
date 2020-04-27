@@ -3,6 +3,8 @@ scala_library(
     '3rdparty/jvm:finagle-thrift',
     '3rdparty/jvm:finatra-thrift',
     'local/src/thrift',
+    'local/directory',
+    'local/memory',
   ],
 )
 

@@ -21,9 +21,9 @@ trait VirtualizationImplementation {
 
   lazy val ioLayer: VirtualIOLayer = new VirtualIOLayer
 
-  def withVirtualIOLayer(
-    cwd: Path,
-  )(runMainMethod: => Int): Future[CompleteVirtualizedProcessResult] = {
+  def withVirtualIOLayer(cwd: Path)(
+    runMainMethod: => Int
+  ): Future[CompleteVirtualizedProcessResult] = {
     // Acquire stdio.
     val inMemStdio = InMemoryStdio.acquire()
 

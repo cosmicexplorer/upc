@@ -48,11 +48,29 @@ exception ProcessExecutionError {
   2: optional string description,
 }
 
+struct SubprocessRequestId {
+  1: optional string id,
+}
+
+struct ProcessReapResult {
+  1: optional ExecuteProcessResult exe_result,
+  2: optional SubprocessRequestId id,
+}
+
+enum ProcessReapErrorCode {
+  PARENT_EXECUTION_NOT_FOUND = 1,
+}
+exception ProcessReapError {
+  1: optional ProcessReapErrorCode error_coode,
+  2: optional string description,
+}
+
 service ProcessExecutionService {
   ExecuteProcessResult executeProcesses(1: VirtualizedExecuteProcessRequest execute_process_request)
     throws (1: ProcessExecutionError process_execution_error)
 
   // NB: These two methods *would* be in different services, but Finatra only supports a single
   // controller per thrift server, and hence only a single thrift service per server.
-  void reapProcess(1: ExecuteProcessResult process_result)
+  void reapProcess(1: ProcessReapResult process_reap_result)
+    throws (1: ProcessReapError process_reap_error)
 }
