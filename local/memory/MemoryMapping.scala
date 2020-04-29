@@ -89,7 +89,7 @@ object IntoNative {
 
   implicit object ShmKeyIntoNative extends IntoNative[ShmKey, LibMemory.ShmKey] {
     def intoNative(jvm: ShmKey): Try[LibMemory.ShmKey] = Try(
-      LibMemory.ShmKey(jvm.digest.length, jvm.digest.fingerprint))
+      LibMemory.ShmKey(jvm.digest.sizeBytes, jvm.digest.fingerprint))
   }
 
   implicit object MemoryMappingIntoNative extends IntoNative[MemoryMapping, Pointer] {
@@ -141,7 +141,7 @@ object FromNative {
       extends FromNative[ShmKey, LibMemory.ShmKey] {
     def fromNative(native: LibMemory.ShmKey): Try[ShmKey] = Try(ShmKey(Digest(
       fingerprint = native.getFingerprintBytes,
-      length = native.getSize,
+      sizeBytes = native.getSize,
     )))
   }
 

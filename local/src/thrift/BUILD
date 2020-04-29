@@ -1,7 +1,5 @@
 java_thrift_library(
   sources=['*.thrift'],
-  language='scala',
-  compiler='scrooge',
 )
 
 scala_library(

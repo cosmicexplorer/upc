@@ -15,7 +15,7 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
 
     val req = ShmGetKeyRequest(mapping)
     val key = Shm.getKey(req).get
-    key.digest.length should be (knownSource.length)
+    key.digest.sizeBytes should be (knownSource.sizeBytes)
     key.digest.fingerprintHex should be ("f0e4c2f76c58916ec258f246851bea091d14d4247a2fc3e18694461b1816e13b")
   }
 
@@ -26,7 +26,7 @@ class MemoryMappingSpec extends FlatSpec with Matchers {
 
     val key_req = ShmGetKeyRequest(mapping)
     val key = Shm.getKey(key_req).get
-    key.digest.length should be (randomSource.length)
+    key.digest.sizeBytes should be (randomSource.sizeBytes)
 
     val retrieve_req = ShmRetrieveRequest(key)
     a [RetrieveDidNotExist] should be thrownBy {

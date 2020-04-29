@@ -5,38 +5,11 @@ jar_library(
   ],
 )
 
-SCROOGE_REV = '20.4.0'
-
-jar_library(name='finagle-thrift',
-  jars=[
-    scala_jar(org='com.twitter', name='finagle-thrift', rev=SCROOGE_REV),
-  ],
-)
-
-FINATRA_REV = SCROOGE_REV
-
 jar_library(
-  name='finatra-thrift',
+  name='jaxb-api',
   jars=[
-    scala_jar(org='com.twitter', name='finatra-thrift', rev=FINATRA_REV),
-  ]
-)
-
-jar_library(
-  name='finatra-thrift-tests',
-  jars=[
-    scala_jar(org='com.twitter', name='finatra-thrift', rev=FINATRA_REV,
-              classifier='tests'),
-    scala_jar(org='com.twitter', name='inject-server', rev=FINATRA_REV,
-              classifier='tests'),
-    scala_jar(org='com.twitter', name='inject-app', rev=FINATRA_REV,
-              classifier='tests'),
-    scala_jar(org='com.twitter', name='inject-core', rev=FINATRA_REV,
-              classifier='tests'),
-    scala_jar(org='com.twitter', name='inject-modules', rev=FINATRA_REV,
-              classifier='tests'),
+    jar(org='javax.xml.bind', name='jaxb-api', rev='2.3.1'),
   ],
-  scope='compile test',
 )
 
 jar_library(
@@ -54,13 +27,6 @@ jar_library(
 )
 
 jar_library(
-  name='logback',
-  jars=[
-    jar(org='ch.qos.logback', name='logback-classic', rev='1.2.3'),
-  ],
-)
-
-jar_library(
   name='nailgun-server',
   jars=[
     jar(org='com.martiansoftware', name='nailgun-server', rev='0.9.1'),
@@ -71,24 +37,6 @@ jar_library(
   name='scalatest',
   jars=[
     scala_jar(org='org.scalatest', name='scalatest', rev='3.0.0'),
-  ],
-)
-
-jar_library(name='scrooge-core',
-  jars=[
-    scala_jar(org='com.twitter', name='scrooge-core', rev=SCROOGE_REV),
-  ],
-)
-
-jar_library(name='scrooge-generator',
-  jars=[
-    scala_jar(org='com.twitter', name='scrooge-generator', rev=SCROOGE_REV),
-  ],
-)
-
-jar_library(name='scrooge-linter',
-  jars=[
-    scala_jar(org='com.twitter', name='scrooge-linter', rev=SCROOGE_REV),
   ],
 )
 

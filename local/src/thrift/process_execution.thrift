@@ -1,5 +1,5 @@
 namespace rs upc.local.thrift_rust.process_execution
-#@namespace scala upc.local.thriftscala.process_execution
+namespace java upc.local.thriftjava.process_execution
 
 struct ShmKey {
   1: optional string fingerprint,
@@ -55,8 +55,8 @@ struct ProcessReapResult {
 
 service ProcessExecutionService {
   ExecuteProcessResult executeProcesses(1: VirtualizedExecuteProcessRequest execute_process_request)
+}
 
-  // NB: These two methods *would* be in different services, but Finatra only supports a single
-  // controller per thrift server, and hence only a single thrift service per server.
+service ProcessReapService {
   void reapProcess(1: ProcessReapResult process_reap_result)
 }

@@ -4,17 +4,18 @@ import upc.local._
 import upc.local.directory._
 import upc.local.memory._
 import upc.local.thrift.ViaThrift._
-import upc.local.thriftscala.{process_execution => thriftscala}
+import upc.local.thriftjava.{process_execution => thriftjava}
 import upc.local.virtual_cli.client.MainWrapperEnvVars
 
-import com.twitter.finatra.thrift.Controller
-import com.twitter.inject.Logging
-import com.twitter.util.{Future, FuturePool, Promise, Try}
-import com.twitter.scrooge.{Request, Response}
+import ammonite.ops._
 
 import java.util.UUID
 import scala.collection.mutable
+import scala.concurrent.{Await, Future, Promise}
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 import scala.sys.process.{Process, ProcessLogger}
+import scala.util.Try
 
 
 case class DaemonExecuteProcessRequest(inner: ReducedExecuteProcessRequest)
@@ -22,9 +23,12 @@ case class DaemonExecuteProcessRequest(inner: ReducedExecuteProcessRequest)
 case class DaemonExecuteProcessResult(exitCode: Int, stdout: String, stderr: String)
 
 
-class ProcessExecutionController extends Controller(thriftscala.ProcessExecutionService)
-    with Logging {
-  import thriftscala.ProcessExecutionService._
+class ProcessExecutionController(reapSocketPath: Path)
+    extends thriftjava.ProcessExecutionService.Iface
+    with thriftjava.ProcessReapService.Iface {
+
+  val logger = new Logger
+  import logger._
 
   val liveDaemonExecuteProcesses: mutable.Set[DaemonExecuteProcessRequest] = mutable.Set.empty
 
@@ -49,10 +53,11 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
           info(s"LOG: $logLine (from daemon process $req)")
         }
 
-        val executeProcess: Future[Unit] = FuturePool.unboundedPool {
+        val executeProcess: Future[Unit] = Future {
           val exitCode = builder.run(logger).exitValue()
           debug(s"EXIT: code: $exitCode for daemon process $req")
-        }.ensure {
+        }
+        executeProcess.onComplete { _ =>
           liveDaemonExecuteProcesses.synchronized {
             liveDaemonExecuteProcesses -= req
           }
@@ -75,9 +80,8 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
 
     val env = req.env ++ Seq(
       (MainWrapperEnvVars.VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR -> vfsDigest.digest.fingerprintHex),
-      (MainWrapperEnvVars.VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR -> vfsDigest.digest.length.toString),
-      (MainWrapperEnvVars.PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR ->
-        ProcessExecutionServer.defaultThriftPortNum.toString),
+      (MainWrapperEnvVars.VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR -> vfsDigest.digest.sizeBytes.toString),
+      (MainWrapperEnvVars.PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH_ENV_VAR -> reapSocketPath.toString),
       (MainWrapperEnvVars.SUBPROCESS_REQUEST_ID_ENV_VAR -> requestId.inner),
     )
 
@@ -94,12 +98,13 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
       liveSubprocesses(requestId) = promise
     }
 
-    val executeProcess: Future[Unit] = FuturePool.unboundedPool {
+    val executeProcess: Future[Unit] = Future {
       val exitCode = builder.run(logger).exitValue()
+      throw new Exception(s"exitCode: $exitCode")
       debug(s"EXIT(SUBPROC): code: $exitCode for subprocess $req")
     }
     executeProcess
-      .flatMap(Unit => promise)
+      .flatMap(Unit => promise.future)
   }
 
   def getCattedOutput(keys: Seq[ShmKey]): Try[ShmKey] = Try {
@@ -112,8 +117,10 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
     key
   }
 
-  handle(ExecuteProcesses).withFn { request: Request[ExecuteProcesses.Args] =>
-    val req = request.args.executeProcessRequest.fromThrift().get
+  override def executeProcesses(
+    request: thriftjava.VirtualizedExecuteProcessRequest,
+  ): thriftjava.ExecuteProcessResult = {
+    val req = request.fromThrift().get
 
     // If there is a daemon execution request specified, see if it's already running, and start one
     // up if not.
@@ -121,7 +128,7 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
       .map(DaemonExecuteProcessRequest(_))
       .foreach(maybeExecuteDaemon(_))
 
-    val completedProcesses: Future[Seq[ExecuteProcessResult]] = Future.collect(
+    val completedProcesses: Future[Seq[ExecuteProcessResult]] = Future.sequence(
       req.conjoinedRequests.map(executeSubprocess(_)))
 
     // Concatenate the output streams and merge the directory digests.
@@ -145,18 +152,20 @@ class ProcessExecutionController extends Controller(thriftscala.ProcessExecution
       )
     }
 
-    mergedResult.map(_.toThrift).map(Response(_))
+    Await.result(mergedResult.map(_.toThrift), 5.minutes)
   }
 
-  handle(ReapProcess).withFn { request: Request[ReapProcess.Args] =>
-    val ProcessReapResult(exeResult, id) = request.args.processReapResult.fromThrift().get
+  override def reapProcess(request: thriftjava.ProcessReapResult): Unit = {
+    val ProcessReapResult(exeResult, id) = request.fromThrift().get
+
+    info(s"exeResult: $exeResult")
+
     val promise = liveSubprocesses.synchronized {
       val ret = liveSubprocesses(id)
       liveSubprocesses -= id
       ret
     }
-    promise.setValue(exeResult)
-
-    Future(Response(()))
+    promise.success(exeResult)
+    ()
   }
 }

@@ -3,12 +3,12 @@ scala_library(
     '3rdparty/jvm:ammonite-ops',
     '3rdparty/jvm:junixsocket',
     '3rdparty/jvm:nailgun-server',
-    '3rdparty/jvm:finagle-thrift',
     'local',
     'local/src/thrift',
     'local/src/thrift:via-thrift',
     'local/directory',
     'local/memory',
+    'local/thrift-socket',
   ],
 )
 

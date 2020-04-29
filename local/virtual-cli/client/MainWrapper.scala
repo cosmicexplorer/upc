@@ -1,12 +1,13 @@
 package upc.local.virtual_cli.client
 
 import upc.local._
+import upc.local.thrift_socket.ThriftUnixClient
 import upc.local.thrift.ViaThrift._
-import upc.local.thriftscala.{process_execution => thriftscala}
+import upc.local.thriftjava.{process_execution => thriftjava}
 
 import ammonite.ops._
 import com.martiansoftware.nailgun.NGContext
-import com.twitter.finagle.Thrift
+import org.apache.thrift.protocol.TBinaryProtocol
 
 import java.util.concurrent.Executors
 import scala.concurrent.{blocking, Await, ExecutionContext, Future}
@@ -21,11 +22,13 @@ trait VirtualizationImplementation {
 
   lazy val ioLayer: VirtualIOLayer = new VirtualIOLayer
 
+  def acquireStdio(): InMemoryStdio = InMemoryStdio.acquire(overwriteStderr = false)
+
   def withVirtualIOLayer(cwd: Path)(
     runMainMethod: => Int
   ): Future[ExecuteProcessResult] = {
     // Acquire stdio.
-    val inMemStdio = InMemoryStdio.acquire()
+    val inMemStdio = acquireStdio()
 
     val ioConfig = acquireIOServicesConfig().get
     implicit val executor = ioConfig.executor
@@ -48,7 +51,7 @@ object MainWrapperEnvVars {
   val VFS_FILE_MAPPING_FINGERPRINT_ENV_VAR = "UPC_VFS_FILE_MAPPING_FINGERPRINT"
   val VFS_FILE_MAPPING_SIZE_BYTES_ENV_VAR = "UPC_VFS_FILE_MAPPING_SIZE_BYTES"
 
-  val PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT"
+  val PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH_ENV_VAR = "UPC_PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH"
 
   val SUBPROCESS_REQUEST_ID_ENV_VAR = "UPC_SUBPROCESS_REQUEST_ID"
 
@@ -90,14 +93,15 @@ trait MainWrapper extends VirtualizationImplementation {
 
   def withProcessReapClient(f: => Future[ExecuteProcessResult]): Try[ExitCode] = Try {
     val subprocessRequestId = SubprocessRequestId(sys.env(SUBPROCESS_REQUEST_ID_ENV_VAR))
-    val processReapServicePort = sys.env(PROCESS_REAP_SERVICE_THRIFT_SOCKET_PORT_ENV_VAR).toInt
-    val client = Thrift.Client().build[
-      thriftscala.ProcessExecutionService[Future]
-    ](s":$processReapServicePort")
+    val processReapServicePath = Path(sys.env(PROCESS_REAP_SERVICE_THRIFT_SOCKET_PATH_ENV_VAR))
+    val socket = ThriftUnixClient(processReapServicePath).get
+    val protocol = new TBinaryProtocol(socket)
+    val client = new thriftjava.ProcessReapService.Client(protocol)
 
     val result: ExecuteProcessResult = Await.result(f, Duration.Inf)
     val reapResult = ProcessReapResult(exeResult = result, id = subprocessRequestId)
-    val () = Await.result(client.reapProcess(reapResult.toThrift), Duration.Inf)
+
+    val () = client.reapProcess(reapResult.toThrift)
     result.exitCode
   }
 

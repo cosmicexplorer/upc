@@ -112,7 +112,7 @@ object DirectoryMappingFromNative {
     def fromNative(native: LibDirectory.DirectoryDigest): Try[DirectoryDigest] = Try(
       DirectoryDigest(Digest(
         fingerprint = native.getFingerprintBytes,
-        length = native.getSize,
+        sizeBytes = native.getSize,
       )))
   }
 
@@ -130,7 +130,7 @@ object DirectoryMappingFromNative {
       FileStat(
         key = ShmKey(Digest(
           fingerprint = native.getFingerprintBytes,
-          length = native.getSize,
+          sizeBytes = native.getSize,
         )),
         path = ChildRelPath(relpathFromBytes(native.getPathBytes)),
       )

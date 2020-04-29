@@ -39,10 +39,12 @@ class InMemoryStdio(input: InputStdio) {
   }
 }
 object InMemoryStdio {
-  def acquire(): InMemoryStdio = {
+  def acquire(overwriteStderr: Boolean = false): InMemoryStdio = {
     val ret = new InMemoryStdio(InputStdio.acquire())
     System.setOut(ret.stdout)
-    System.setErr(ret.stderr)
+    if (overwriteStderr) {
+      System.setErr(ret.stderr)
+    }
     ret
   }
 }
