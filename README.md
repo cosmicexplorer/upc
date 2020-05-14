@@ -12,5 +12,9 @@ Ultra-high-performance local IPC framework with Zipkin tracing to conduct a beau
 3. Transparent distributed memory and process execution!
   - *via [the bazel remexec API](https://github.com/bazelbuild/remote-apis)!*
 
+# TODO
+- [use a prototype for virtualized i/o in zinc from the sbt maintainer to demonstrate SUPER FAST COMPILES!!!!](https://twitter.com/hipsterelectron/status/1258499282589503488?s=21)
+- ["would be interesting to see how far we can get with openmpi vs openmp on a single machine." @pyalamanchili](https://twitter.com/pavan_ky/status/1260846963458625536?s=20)
+
 # License
 [Apache v2](./LICENSE)
