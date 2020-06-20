@@ -12,11 +12,7 @@
 // It is often more clear to show that nothing is being moved.
 #![allow(clippy::match_ref_pats)]
 // Subjective style.
-#![allow(
-  clippy::len_without_is_empty,
-  clippy::redundant_field_names,
-  clippy::too_many_arguments
-)]
+#![allow(clippy::redundant_field_names, clippy::too_many_arguments)]
 // Default isn't as big a deal as people seem to think it is.
 #![allow(clippy::new_without_default, clippy::new_ret_no_self)]
 // Arc<Mutex> can be more clear than needing to grok Orderings:
@@ -630,9 +626,7 @@ mod tests {
       .map(|(c, s)| {
         (
           c.clone(),
-          remexec::memory_map_file_content(s.as_bytes())
-            .unwrap()
-            .key,
+          remexec::memory_map_file_content(s.as_bytes()).unwrap().key,
         )
       })
       .collect();

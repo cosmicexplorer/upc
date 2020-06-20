@@ -14,11 +14,7 @@
 // It is often more clear to show that nothing is being moved.
 #![allow(clippy::match_ref_pats)]
 // Subjective style.
-#![allow(
-  clippy::len_without_is_empty,
-  clippy::redundant_field_names,
-  clippy::too_many_arguments
-)]
+#![allow(clippy::redundant_field_names, clippy::too_many_arguments)]
 // Default isn't as big a deal as people seem to think it is.
 #![allow(clippy::new_without_default, clippy::new_ret_no_self)]
 // Arc<Mutex> can be more clear than needing to grok Orderings:
@@ -42,7 +38,7 @@ pub trait AllocationDescriptor: Default + Eq + PartialEq + Hash {
 }
 
 pub trait IntrusiveTable<K> {
-  fn erase_all(&mut self);
+  fn initialize(&mut self);
   fn retrieve(&self, key: &K) -> Option<&[u8]>;
   fn allocate(&mut self, source: &[u8]) -> Result<(&K, &[u8]), Error>;
   fn delete(&mut self, key: &K) -> Result<(), Error>;
@@ -89,7 +85,7 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
   }
 
   ///
-  /// The table is laid out in two consecutive segments as:
+  /// The table is laid out in three consecutive segments as:
   ///
   /// ^[hash table][<extent index>][allocatable data]$
   ///
@@ -209,7 +205,8 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
       /* The entry did *not* exist already -- let's populate it. */
       if cur_entry.is_default() {
         /* Atomically bump up the memory line. */
-        let previous_extent = allocated_region_extent.fetch_add(key.size_of_pointed_to(), Ordering::SeqCst);
+        let previous_extent =
+          allocated_region_extent.fetch_add(key.size_of_pointed_to(), Ordering::SeqCst);
         let new_extent = previous_extent + key.size_of_pointed_to();
         /* If we run out of space, error out. */
         if new_extent > allocatable_data.len() {
@@ -237,7 +234,7 @@ impl<'a, K: 'a + AllocationDescriptor> IntrusiveAllocator<'a, K> {
 }
 
 impl<'a, K: AllocationDescriptor> IntrusiveTable<K> for IntrusiveAllocator<'a, K> {
-  fn erase_all(&mut self) {
+  fn initialize(&mut self) {
     /* Apparently this will compile down to vectorized operations -- see
      * https://stackoverflow.com/questions/51732596/what-is-the-equivalent-of-a-safe-memset-for-slices/51732799#51732799 */
     for entry in self.hash_table.iter_mut() {
@@ -309,7 +306,7 @@ mod tests {
   fn allocate_retrieve_delete_end_to_end() -> Result<(), Error> {
     let mut backing_bytes: [u8; 500] = get_backing_bytes();
     let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
-    allocator.erase_all();
+    allocator.initialize();
 
     let source_bytes = "asdfasdfasdf".as_bytes();
     let key = Key::digest(source_bytes);
@@ -335,7 +332,7 @@ mod tests {
   fn allocate_too_large() -> Result<(), Error> {
     let mut backing_bytes: [u8; 500] = get_backing_bytes();
     let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
-    allocator.erase_all();
+    allocator.initialize();
 
     let source_bytes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".as_bytes();
     assert!(source_bytes.len() > 500);
@@ -352,7 +349,7 @@ mod tests {
   fn allocate_too_many() -> Result<(), Error> {
     let mut backing_bytes: [u8; 500] = get_backing_bytes();
     let mut allocator = IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
-    allocator.erase_all();
+    allocator.initialize();
 
     let mut errored: bool = false;
     for i in 0..50 {
@@ -385,7 +382,7 @@ mod tests {
     {
       let mut allocator =
         IntrusiveAllocator::<'_, Key>::allocator_within_region(&mut backing_bytes);
-      allocator.erase_all();
+      allocator.initialize();
 
       assert_eq!(None, allocator.retrieve(&key));
       assert_eq!(Err(Error::DeleteDidNotExist), allocator.delete(&key));

@@ -156,7 +156,7 @@ impl RawShmHandle {
     /* TODO: there are several remaining concurrency bugs here. It's probably fine for now as this
      * initialization only occurs once at program startup. */
     if did_create {
-      allocator.erase_all();
+      allocator.initialize();
     }
 
     Ok(RawShmHandle {
