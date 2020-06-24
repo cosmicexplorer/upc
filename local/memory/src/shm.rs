@@ -3,21 +3,52 @@ use super::mmap_bindings::{self, key_t, size_t, IPC_CREAT, IPC_EXCL, IPC_R, IPC_
 
 use intrusive_table::{self, IntrusiveAllocator, IntrusiveTable};
 
+use bytes::Bytes;
 use hashing::{Digest, Fingerprint};
+use store::Store;
+use task_executor::Executor;
+use workunit_store::WorkUnitStore;
 
+use futures01::Future;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
 use std::collections::HashMap;
 use std::convert::{From, Into};
 use std::default::Default;
+use std::env;
 use std::ffi::CString;
 use std::io;
 use std::mem;
 use std::os;
+use std::path::PathBuf;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
+
+lazy_static! {
+  pub static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
+  pub static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
+  static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
+    Some(local_store_dir) => PathBuf::from(local_store_dir),
+    None => Store::default_path(),
+  };
+  pub static ref LOCAL_STORE: Arc<Store> = {
+    let executor = PANTS_TOKIO_EXECUTOR.clone();
+    let store = Store::local_only(executor, &*LOCAL_STORE_PATH).unwrap();
+    Arc::new(store)
+  };
+}
+
+pub fn block_on_with_persistent_runtime<
+  Item: Send + 'static,
+  Error: Send + 'static,
+  F: Future<Item = Item, Error = Error> + Send + 'static,
+>(
+  future: F,
+) -> Result<Item, Error> {
+  PANTS_TOKIO_EXECUTOR.block_on_with_persistent_runtime(future)
+}
 
 /* The FFI-friendly unsigned integer type used for measuring sizes of allocated memory regions. */
 pub type SizeType = u64;
@@ -604,11 +635,19 @@ pub unsafe extern "C" fn shm_allocate(
   result: *mut ShmAllocateResult,
 ) {
   let key = (*request).key;
-  let shm_request = (*request).into();
+  let digest: Digest = key.into();
+  let bytes = {
+    slice::from_raw_parts(
+      mem::transmute::<*const os::raw::c_void, *const u8>((*request).source),
+      digest.1,
+    )
+  };
+  let store_result =
+    block_on_with_persistent_runtime(LOCAL_STORE.store_file_bytes(Bytes::from(bytes), true));
 
-  *result = match ShmHandle::new(shm_request) {
-    Ok(shm_handle) => ShmAllocateResult::successful(shm_handle.get_base_address(), key),
-    Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key),
+  *result = match store_result {
+    Ok(_) => ShmAllocateResult::successful((*request).source, key),
+    /* Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key), */
     Err(e) => {
       let error: String = format!("{:?}", e);
       let error_message = CString::new(error).unwrap();

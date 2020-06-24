@@ -1,39 +1,19 @@
 use super::*;
 
 use memory::shm::*;
+pub use memory::shm::{block_on_with_persistent_runtime, LOCAL_STORE, PANTS_WORKUNIT_STORE};
 
 use bazel_protos::remote_execution as remexec_api;
 use boxfuture::{BoxFuture, Boxable};
 use bytes::Bytes;
 use fs::FileContent;
 use hashing::{Digest, Fingerprint};
-use store::Store;
-use task_executor::Executor;
-use workunit_store::WorkUnitStore;
 
 use futures01::{future, Future};
-use lazy_static::lazy_static;
 use protobuf;
 
 use std::convert::{From, Into};
-use std::env;
-use std::path::PathBuf;
 use std::str;
-use std::sync::Arc;
-
-lazy_static! {
-  static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
-  pub static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
-  static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
-    Some(local_store_dir) => PathBuf::from(local_store_dir),
-    None => Store::default_path(),
-  };
-  pub static ref LOCAL_STORE: Arc<Store> = {
-    let executor = PANTS_TOKIO_EXECUTOR.clone();
-    let store = Store::local_only(executor, &*LOCAL_STORE_PATH).unwrap();
-    Arc::new(store)
-  };
-}
 
 #[derive(Debug)]
 pub enum RemexecError {
@@ -295,16 +275,6 @@ pub fn memory_map_file_content(bytes: &[u8]) -> Result<ShmHandle<'static>, Remex
     unsafe { mem::transmute::<*const u8, *const os::raw::c_void>(bytes.as_ptr()) };
   let request = ShmAllocateRequest { key, source };
   ShmHandle::new(request.into()).map_err(|e| format!("{:?}", e).into())
-}
-
-pub fn block_on_with_persistent_runtime<
-  Item: Send + 'static,
-  Error: Send + 'static,
-  F: Future<Item = Item, Error = Error> + Send + 'static,
->(
-  future: F,
-) -> Result<Item, Error> {
-  PANTS_TOKIO_EXECUTOR.block_on_with_persistent_runtime(future)
 }
 
 #[cfg(test)]

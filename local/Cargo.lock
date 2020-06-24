@@ -600,13 +600,9 @@ dependencies = [
  "futures",
  "hashing",
  "indexmap",
- "lazy_static",
  "memory",
  "protobuf",
- "store",
- "task_executor",
  "walkdir 2.3.1",
- "workunit_store",
 ]
 
 [[package]]
@@ -1318,15 +1314,20 @@ name = "memory"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "bytes",
  "cbindgen",
+ "futures",
  "hashing",
  "intrusive-table",
  "lazy_static",
  "parking_lot 0.6.4",
  "serde",
  "serde_derive",
+ "store",
+ "task_executor",
  "uuid 0.8.1",
  "walkdir 2.3.1",
+ "workunit_store",
 ]
 
 [[package]]
