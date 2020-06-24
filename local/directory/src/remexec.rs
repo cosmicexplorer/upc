@@ -23,12 +23,12 @@ use std::sync::Arc;
 
 lazy_static! {
   static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
-  static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
+  pub static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
   static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
     Some(local_store_dir) => PathBuf::from(local_store_dir),
     None => Store::default_path(),
   };
-  static ref LOCAL_STORE: Arc<Store> = {
+  pub static ref LOCAL_STORE: Arc<Store> = {
     let executor = PANTS_TOKIO_EXECUTOR.clone();
     let store = Store::local_only(executor, &*LOCAL_STORE_PATH).unwrap();
     Arc::new(store)

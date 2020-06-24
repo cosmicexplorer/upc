@@ -6,6 +6,12 @@
 #include <stdlib.h>
 
 typedef enum {
+  DigestExists,
+  DigestDoesNotExist,
+  OtherUnknownError,
+} DigestCheckResult;
+
+typedef enum {
   ExpandDirectoriesSucceeded,
   ExpandDirectoriesFailed,
 } ExpandDirectoriesResultStatus;
@@ -62,6 +68,8 @@ typedef struct {
   char *error_message;
   UploadDirectoriesResultStatus status;
 } UploadDirectoriesResult;
+
+DigestCheckResult check_directory_digest_existence(DirectoryDigest digest);
 
 void directories_expand(const ExpandDirectoriesRequest *request, ExpandDirectoriesResult *result);
 

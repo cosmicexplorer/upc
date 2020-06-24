@@ -610,6 +610,26 @@ pub unsafe extern "C" fn directories_upload(
   *result = owned_result.into_ffi();
 }
 
+#[repr(C)]
+pub enum DigestCheckResult {
+  DigestExists,
+  DigestDoesNotExist,
+  OtherUnknownError,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn check_directory_digest_existence(
+  digest: DirectoryDigest,
+) -> DigestCheckResult {
+  let maybe_load_digest =
+    remexec::LOCAL_STORE.load_directory(digest.into(), remexec::PANTS_WORKUNIT_STORE.clone());
+  match remexec::block_on_with_persistent_runtime(maybe_load_digest) {
+    Ok(Some(_)) => DigestCheckResult::DigestExists,
+    Ok(None) => DigestCheckResult::DigestDoesNotExist,
+    Err(_) => DigestCheckResult::OtherUnknownError,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
