@@ -595,6 +595,7 @@ dependencies = [
  "bazel_protos",
  "boxfuture",
  "bytes",
+ "cbindgen",
  "fs",
  "futures",
  "hashing",
@@ -604,6 +605,7 @@ dependencies = [
  "protobuf",
  "store",
  "task_executor",
+ "walkdir 2.3.1",
  "workunit_store",
 ]
 

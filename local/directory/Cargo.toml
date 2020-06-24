@@ -21,3 +21,7 @@ protobuf = { version = "2.0.6", features = ["with-bytes"] }
 store = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs/store" }
 task_executor = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/task_executor" }
 workunit_store = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/workunit_store" }
+
+[build-dependencies]
+cbindgen = "0.8.6"
+walkdir = "2"
