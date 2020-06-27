@@ -29,7 +29,7 @@ use std::sync::Arc;
 lazy_static! {
   pub static ref PANTS_TOKIO_EXECUTOR: Executor = Executor::new();
   pub static ref PANTS_WORKUNIT_STORE: WorkUnitStore = WorkUnitStore::new();
-  static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
+  pub static ref LOCAL_STORE_PATH: PathBuf = match env::var("UPC_IN_PROCESS_LOCAL_STORE_DIR").ok() {
     Some(local_store_dir) => PathBuf::from(local_store_dir),
     None => Store::default_path(),
   };
@@ -629,25 +629,94 @@ pub unsafe extern "C" fn shm_retrieve(
   };
 }
 
+#[repr(C)]
+pub struct ShmCheckExistsRequest {
+  pub source: *const os::raw::c_void,
+  pub size_bytes: u64,
+}
+
+#[repr(C)]
+pub enum ShmCheckExistsResult {
+  ShmCheckAllocationExists,
+  ShmCheckAllocationDoesNotExist,
+  ShmCheckAllocationOtherError,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn shm_check_if_exists(
+  request: *const ShmCheckExistsRequest,
+) -> ShmCheckExistsResult {
+  let ShmCheckExistsRequest { source, size_bytes } = *request;
+  let source_slice: &[u8] = {
+    slice::from_raw_parts(
+      mem::transmute::<*const os::raw::c_void, *const u8>(source),
+      size_bytes as usize,
+    )
+  };
+  let calculated_digest = hashing::Digest::of_bytes(source_slice);
+  let load_result = block_on_with_persistent_runtime(
+    LOCAL_STORE
+      .load_file_bytes_with(
+        calculated_digest,
+        |bytes| bytes,
+        PANTS_WORKUNIT_STORE.clone(),
+      )
+      .map(|maybe_result| match maybe_result {
+        Some(_) => ShmCheckExistsResult::ShmCheckAllocationExists,
+        None => ShmCheckExistsResult::ShmCheckAllocationDoesNotExist,
+      }),
+  );
+  match load_result {
+    Ok(result) => result,
+    Err(_) => ShmCheckExistsResult::ShmCheckAllocationOtherError,
+  }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn shm_allocate(
   request: *const ShmAllocateRequest,
   result: *mut ShmAllocateResult,
 ) {
   let key = (*request).key;
-  let digest: Digest = key.into();
+  let digest_from_key: Digest = key.into();
   let bytes = {
     slice::from_raw_parts(
       mem::transmute::<*const os::raw::c_void, *const u8>((*request).source),
-      digest.1,
+      digest_from_key.1,
     )
   };
+  let calculated_digest = Digest::of_bytes(bytes);
+  let load_result: bool = match block_on_with_persistent_runtime(
+    LOCAL_STORE
+      .load_file_bytes_with(
+        calculated_digest,
+        |bytes| bytes,
+        PANTS_WORKUNIT_STORE.clone(),
+      )
+      .map(|maybe_result| match maybe_result {
+        Some(_) => true,
+        None => false,
+      }),
+  ) {
+    Ok(result) => result,
+    Err(_) => false,
+  };
+  if load_result {
+    *result = ShmAllocateResult::successful((*request).source, key);
+    return;
+  }
+
   let store_result =
     block_on_with_persistent_runtime(LOCAL_STORE.store_file_bytes(Bytes::from(bytes), true));
 
   *result = match store_result {
-    Ok(_) => ShmAllocateResult::successful((*request).source, key),
-    /* Err(ShmError::DigestDidNotMatch(shm_key)) => ShmAllocateResult::mismatched_digest(shm_key), */
+    Ok(checked_digest) => {
+      if checked_digest == digest_from_key {
+        ShmAllocateResult::successful((*request).source, key)
+      } else {
+        ShmAllocateResult::mismatched_digest(key)
+      }
+    }
     Err(e) => {
       let error: String = format!("{:?}", e);
       let error_message = CString::new(error).unwrap();

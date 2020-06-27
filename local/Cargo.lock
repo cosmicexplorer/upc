@@ -600,8 +600,12 @@ dependencies = [
  "futures",
  "hashing",
  "indexmap",
+ "lazy_static",
  "memory",
  "protobuf",
+ "serde",
+ "serde_json",
+ "sharded_lmdb",
  "walkdir 2.3.1",
 ]
 

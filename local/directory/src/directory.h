@@ -6,10 +6,10 @@
 #include <stdlib.h>
 
 typedef enum {
-  DigestExists,
-  DigestDoesNotExist,
-  OtherUnknownError,
-} DigestCheckResult;
+  OidMappingExists,
+  OidMappingDoesNotExist,
+  OidMappingOtherError,
+} DirectoryOidCheckMappingResult;
 
 typedef enum {
   ExpandDirectoriesSucceeded,
@@ -69,8 +69,30 @@ typedef struct {
   UploadDirectoriesResultStatus status;
 } UploadDirectoriesResult;
 
-DigestCheckResult check_directory_digest_existence(DirectoryDigest digest);
+typedef struct {
+  void *inner_context;
+} TreeTraversalFFIContext;
 
 void directories_expand(const ExpandDirectoriesRequest *request, ExpandDirectoriesResult *result);
 
 void directories_upload(const UploadDirectoriesRequest *request, UploadDirectoriesResult *result);
+
+DirectoryOidCheckMappingResult directory_oid_check_mapping(Fingerprint fingerprint, Digest *result);
+
+void tree_traversal_add_directory(TreeTraversalFFIContext *ctx,
+                                  const char *parent_directory,
+                                  const char *relpath);
+
+void tree_traversal_add_file(TreeTraversalFFIContext *ctx,
+                             const char *parent_directory,
+                             const char *relpath,
+                             const Digest *digest);
+
+void tree_traversal_add_known_directory(TreeTraversalFFIContext *ctx,
+                                        const char *parent_directory,
+                                        const char *relpath,
+                                        const Digest *digest);
+
+void tree_traversal_destroy_context(TreeTraversalFFIContext *ctx);
+
+void tree_traversal_init_context(TreeTraversalFFIContext *ctx);

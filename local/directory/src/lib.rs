@@ -24,23 +24,41 @@ pub mod remexec;
 pub use memory::shm::SizeType;
 use memory::shm::*;
 
+use bazel_protos::remote_execution as bazel_remexec;
 use boxfuture::{BoxFuture, Boxable};
 use fs::FileContent;
 use hashing::{Digest, Fingerprint};
+use sharded_lmdb::ShardedLmdb;
 
 use futures01::{future, Future};
 use indexmap::IndexMap;
+use lazy_static::lazy_static;
 use protobuf;
+use serde_json;
 
 use std::convert::{From, Into};
 use std::default::Default;
-use std::ffi::{CString, OsStr};
+use std::ffi::{CStr, CString, OsStr};
 use std::fmt::Debug;
 use std::mem;
 use std::os::{self, unix::ffi::OsStrExt};
 use std::path::PathBuf;
 use std::ptr;
 use std::slice;
+use std::str;
+use std::sync::Arc;
+
+lazy_static! {
+  static ref GIT_OID_MAPPING_STORE_PATH: PathBuf = LOCAL_STORE_PATH.join("git-oid-mapping");
+  static ref GIT_OID_DB: Arc<ShardedLmdb> = Arc::new(
+    ShardedLmdb::new(
+      GIT_OID_MAPPING_STORE_PATH.clone(),
+      1_000_000,
+      PANTS_TOKIO_EXECUTOR.clone()
+    )
+    .expect("failed to create ShardedLmdb for git-oid-mapping")
+  );
+}
 
 #[derive(Debug)]
 pub enum DirectoryFFIError {
@@ -610,23 +628,169 @@ pub unsafe extern "C" fn directories_upload(
   *result = owned_result.into_ffi();
 }
 
+enum TreeTraversalEntry {
+  File(PathBuf, Digest),
+  KnownDir(PathBuf, Digest),
+  Directory(PathBuf),
+}
+
+struct GitTreeTraversalContext {
+  map: IndexMap<PathBuf, Vec<TreeTraversalEntry>>,
+}
+
+fn to_bazel_digest(pants_digest: Digest) -> bazel_remexec::Digest {
+  let mut digest = bazel_remexec::Digest::new();
+  digest.set_hash(pants_digest.0.to_hex());
+  digest.set_size_bytes(pants_digest.1 as i64);
+  digest
+}
+
+impl GitTreeTraversalContext {
+  fn new() -> Self {
+    GitTreeTraversalContext {
+      map: IndexMap::new(),
+    }
+  }
+
+  fn add_file(&mut self, parent_directory: PathBuf, relpath: PathBuf, digest: Digest) {
+    let entry = self.map.entry(parent_directory).or_insert_with(Vec::new);
+    entry.push(TreeTraversalEntry::File(relpath, digest));
+  }
+
+  fn add_known_directory(&mut self, parent_directory: PathBuf, relpath: PathBuf, digest: Digest) {
+    let entry = self.map.entry(parent_directory).or_insert_with(Vec::new);
+    entry.push(TreeTraversalEntry::KnownDir(relpath, digest));
+  }
+
+  fn add_directory(&mut self, parent_directory: PathBuf, relpath: PathBuf) {
+    let entry = self.map.entry(parent_directory).or_insert_with(Vec::new);
+    entry.push(TreeTraversalEntry::Directory(relpath));
+  }
+
+  fn upload_recursive_directories(&mut self) -> BoxFuture<(), DirectoryFFIError> {
+    /* FIXME: make this function work!!! */
+    let mut result_map: IndexMap<PathBuf, Digest> = IndexMap::new();
+    while let Some((path, entries)) = self.map.pop() {
+      let mut file_nodes: Vec<bazel_remexec::FileNode> = vec![];
+      let mut directory_nodes: Vec<bazel_remexec::DirectoryNode> = vec![];
+      for entry in entries.into_iter() {
+        match entry {
+          TreeTraversalEntry::File(relpath, digest) => {
+            let mut file_node = bazel_remexec::FileNode::new();
+            file_node.set_name(format!("{}", relpath.display()));
+            file_node.set_digest(to_bazel_digest(digest));
+            file_nodes.push(file_node);
+          }
+          TreeTraversalEntry::KnownDir(relpath, digest) => {
+            let mut directory_node = bazel_remexec::DirectoryNode::new();
+            directory_node.set_name(format!("{}", relpath.display()));
+            directory_node.set_digest(to_bazel_digest(digest));
+            directory_nodes.push(directory_node);
+          }
+          TreeTraversalEntry::Directory(relpath) => {
+            let full_path = path.join(relpath);
+            result_map.get(full_path)
+          },
+        }
+      }
+    }
+  }
+}
+
 #[repr(C)]
-pub enum DigestCheckResult {
-  DigestExists,
-  DigestDoesNotExist,
-  OtherUnknownError,
+pub struct TreeTraversalFFIContext {
+  pub inner_context: *mut os::raw::c_void,
+}
+
+impl TreeTraversalFFIContext {
+  unsafe fn as_context(&mut self) -> &mut GitTreeTraversalContext {
+    &mut *mem::transmute::<*mut os::raw::c_void, *mut GitTreeTraversalContext>(self.inner_context)
+  }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn check_directory_digest_existence(
-  digest: DirectoryDigest,
-) -> DigestCheckResult {
-  let maybe_load_digest =
-    remexec::LOCAL_STORE.load_directory(digest.into(), remexec::PANTS_WORKUNIT_STORE.clone());
-  match remexec::block_on_with_persistent_runtime(maybe_load_digest) {
-    Ok(Some(_)) => DigestCheckResult::DigestExists,
-    Ok(None) => DigestCheckResult::DigestDoesNotExist,
-    Err(_) => DigestCheckResult::OtherUnknownError,
+pub unsafe extern "C" fn tree_traversal_init_context(ctx: &mut TreeTraversalFFIContext) {
+  ctx.inner_context = mem::transmute::<*mut GitTreeTraversalContext, *mut os::raw::c_void>(
+    Box::into_raw(Box::new(GitTreeTraversalContext::new())),
+  );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tree_traversal_destroy_context(ctx: &mut TreeTraversalFFIContext) {
+  let git_context = ctx.as_context();
+  block_on_with_persistent_runtime(git_context.upload_recursive_directories())
+    .expect("uploading recursive directories should not fail!");
+  Box::from_raw(ctx.inner_context);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tree_traversal_add_file(
+  ctx: &mut TreeTraversalFFIContext,
+  parent_directory: *const os::raw::c_char,
+  relpath: *const os::raw::c_char,
+  digest: &Digest,
+) {
+  let git_context = ctx.as_context();
+  let parent_directory_name_slice = OsStr::from_bytes(CStr::from_ptr(parent_directory).to_bytes());
+  let parent_directory = PathBuf::from(&parent_directory_name_slice);
+  let relpath_name_slice = OsStr::from_bytes(CStr::from_ptr(relpath).to_bytes());
+  let relpath = PathBuf::from(&relpath_name_slice);
+  git_context.add_file(parent_directory, relpath, *digest);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tree_traversal_add_known_directory(
+  ctx: &mut TreeTraversalFFIContext,
+  parent_directory: *const os::raw::c_char,
+  relpath: *const os::raw::c_char,
+  digest: &Digest,
+) {
+  let git_context = ctx.as_context();
+  let parent_directory_name_slice = OsStr::from_bytes(CStr::from_ptr(parent_directory).to_bytes());
+  let parent_directory = PathBuf::from(&parent_directory_name_slice);
+  let relpath_name_slice = OsStr::from_bytes(CStr::from_ptr(relpath).to_bytes());
+  let relpath = PathBuf::from(&relpath_name_slice);
+  git_context.add_known_directory(parent_directory, relpath, *digest);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tree_traversal_add_directory(
+  ctx: &mut TreeTraversalFFIContext,
+  parent_directory: *const os::raw::c_char,
+  relpath: *const os::raw::c_char,
+) {
+  let git_context = ctx.as_context();
+  let parent_directory_name_slice = OsStr::from_bytes(CStr::from_ptr(parent_directory).to_bytes());
+  let parent_directory = PathBuf::from(&parent_directory_name_slice);
+  let relpath_name_slice = OsStr::from_bytes(CStr::from_ptr(relpath).to_bytes());
+  let relpath = PathBuf::from(&relpath_name_slice);
+  git_context.add_directory(parent_directory, relpath);
+}
+
+#[repr(C)]
+pub enum DirectoryOidCheckMappingResult {
+  OidMappingExists,
+  OidMappingDoesNotExist,
+  OidMappingOtherError,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn directory_oid_check_mapping(
+  fingerprint: Fingerprint,
+  result: *mut Digest,
+) -> DirectoryOidCheckMappingResult {
+  match block_on_with_persistent_runtime(GIT_OID_DB.load_bytes_with(fingerprint, |bytes| {
+    str::from_utf8(bytes.as_ref())
+      .map(|s| s.to_string())
+      .map_err(|e| format!("{:?}", e))
+  })) {
+    Ok(Some(s)) => {
+      let digest: Digest = serde_json::from_str(&s).expect("failed to unwrap json digest");
+      *result = digest;
+      DirectoryOidCheckMappingResult::OidMappingExists
+    }
+    Ok(None) => DirectoryOidCheckMappingResult::OidMappingDoesNotExist,
+    Err(_) => DirectoryOidCheckMappingResult::OidMappingOtherError,
   }
 }
 
