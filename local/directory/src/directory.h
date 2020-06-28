@@ -70,6 +70,10 @@ typedef struct {
 } UploadDirectoriesResult;
 
 typedef struct {
+  Fingerprint fingerprint;
+} Oid;
+
+typedef struct {
   void *inner_context;
 } TreeTraversalFFIContext;
 
@@ -77,11 +81,12 @@ void directories_expand(const ExpandDirectoriesRequest *request, ExpandDirectori
 
 void directories_upload(const UploadDirectoriesRequest *request, UploadDirectoriesResult *result);
 
-DirectoryOidCheckMappingResult directory_oid_check_mapping(Fingerprint fingerprint, Digest *result);
+DirectoryOidCheckMappingResult directory_oid_check_mapping(Oid oid, Digest *result);
 
 void tree_traversal_add_directory(TreeTraversalFFIContext *ctx,
                                   const char *parent_directory,
-                                  const char *relpath);
+                                  const char *relpath,
+                                  const Oid *oid);
 
 void tree_traversal_add_file(TreeTraversalFFIContext *ctx,
                              const char *parent_directory,
@@ -91,8 +96,11 @@ void tree_traversal_add_file(TreeTraversalFFIContext *ctx,
 void tree_traversal_add_known_directory(TreeTraversalFFIContext *ctx,
                                         const char *parent_directory,
                                         const char *relpath,
-                                        const Digest *digest);
+                                        const Digest *digest,
+                                        const Oid *oid);
 
 void tree_traversal_destroy_context(TreeTraversalFFIContext *ctx);
 
 void tree_traversal_init_context(TreeTraversalFFIContext *ctx);
+
+void tree_traversal_set_root_oid(TreeTraversalFFIContext *ctx, const Oid *oid);

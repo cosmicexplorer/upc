@@ -711,6 +711,7 @@ pub unsafe extern "C" fn shm_allocate(
 
   *result = match store_result {
     Ok(checked_digest) => {
+      assert_eq!(checked_digest, calculated_digest);
       if checked_digest == digest_from_key {
         ShmAllocateResult::successful((*request).source, key)
       } else {
