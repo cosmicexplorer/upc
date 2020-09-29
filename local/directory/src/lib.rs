@@ -54,7 +54,7 @@ lazy_static! {
   static ref GIT_OID_DB: Arc<ShardedLmdb> = Arc::new(
     ShardedLmdb::new(
       GIT_OID_MAPPING_STORE_PATH.clone(),
-      1_000_000,
+      1_000_000_000,
       PANTS_TOKIO_EXECUTOR.clone()
     )
     .expect("failed to create ShardedLmdb for git-oid-mapping")
@@ -693,7 +693,7 @@ impl GitTreeTraversalContext {
   fn upload_directories_helper(
     mut self,
     mut result_map: IndexMap<PathBuf, Digest>,
-  ) -> BoxFuture<(), String> {
+  ) -> BoxFuture<Option<Digest>, String> {
     let pop_result = self.map.pop();
     if let Some((path, entries)) = pop_result {
       let mut file_nodes: Vec<bazel_remexec::FileNode> = vec![];
@@ -750,16 +750,23 @@ impl GitTreeTraversalContext {
               true,
             )
             .and_then(|()| self.upload_directories_helper(result_map))
+            .map(move |_| Some(digest))
             .to_boxed()
         })
         .to_boxed()
     } else {
-      future::ok(()).to_boxed()
+      future::ok(None).to_boxed()
     }
   }
 
-  fn upload_recursive_directories(self) -> BoxFuture<(), String> {
-    self.upload_directories_helper(IndexMap::new())
+  fn upload_recursive_directories(self) -> BoxFuture<Digest, String> {
+    self
+      .upload_directories_helper(IndexMap::new())
+      .map(move |maybe_digest| match maybe_digest {
+        Some(digest) => digest,
+        None => hashing::EMPTY_DIGEST,
+      })
+      .to_boxed()
   }
 }
 
@@ -789,13 +796,28 @@ pub unsafe extern "C" fn tree_traversal_set_root_oid(ctx: &mut TreeTraversalFFIC
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tree_traversal_destroy_context(ctx: &mut TreeTraversalFFIContext) {
+pub unsafe extern "C" fn tree_traversal_destroy_context(
+  ctx: &mut TreeTraversalFFIContext,
+) -> Digest {
   let boxed_context: Box<GitTreeTraversalContext> = Box::from_raw(mem::transmute::<
     *mut os::raw::c_void,
     *mut GitTreeTraversalContext,
   >(ctx.inner_context));
   block_on_with_persistent_runtime(boxed_context.upload_recursive_directories())
-    .expect("uploading recursive directories should not fail!");
+    .expect("uploading recursive directories should not fail!")
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn format_digest_output(digest: Digest) -> *mut os::raw::c_char {
+  let formatted = format!("{:?}", digest);
+  let c_string = CString::new(formatted.as_bytes())
+    .expect("c_string creation from debug output should not have failed");
+  c_string.into_raw()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_rust_string(source: *mut os::raw::c_char) {
+  CString::from_raw(source);
 }
 
 #[no_mangle]
@@ -858,6 +880,7 @@ pub unsafe extern "C" fn directory_oid_check_mapping(
 ) -> DirectoryOidCheckMappingResult {
   eprintln!("oid_check_mapping; {:?}", oid);
   match block_on_with_persistent_runtime(GIT_OID_DB.load_bytes_with(oid.fingerprint, |bytes| {
+    eprintln!("bytes: {:?}", bytes.len());
     str::from_utf8(bytes.as_ref())
       .map(|s| s.to_string())
       .map_err(|e| format!("{:?}", e))

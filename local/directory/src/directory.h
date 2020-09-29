@@ -81,7 +81,13 @@ void directories_expand(const ExpandDirectoriesRequest *request, ExpandDirectori
 
 void directories_upload(const UploadDirectoriesRequest *request, UploadDirectoriesResult *result);
 
+void directory_oid_add_mapping(Oid oid, Digest digest);
+
 DirectoryOidCheckMappingResult directory_oid_check_mapping(Oid oid, Digest *result);
+
+char *format_digest_output(Digest digest);
+
+void free_rust_string(char *source);
 
 void tree_traversal_add_directory(TreeTraversalFFIContext *ctx,
                                   const char *parent_directory,
@@ -99,7 +105,7 @@ void tree_traversal_add_known_directory(TreeTraversalFFIContext *ctx,
                                         const Digest *digest,
                                         const Oid *oid);
 
-void tree_traversal_destroy_context(TreeTraversalFFIContext *ctx);
+Digest tree_traversal_destroy_context(TreeTraversalFFIContext *ctx);
 
 void tree_traversal_init_context(TreeTraversalFFIContext *ctx);
 
