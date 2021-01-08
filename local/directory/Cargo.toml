@@ -8,19 +8,19 @@ edition = "2018"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-bazel_protos = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/process_execution/bazel_protos" }
-boxfuture = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/boxfuture" }
+bazel_protos = { path = "/Users/cosmicexplorer/tools/p2/src/rust/engine/process_execution/bazel_protos" }
+boxfuture = { path = "/Users/cosmicexplorer/tools/p2/src/rust/engine/boxfuture" }
 bytes = "0.4.5"
-fs = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/fs" }
+fs = { path = "/Users/cosmicexplorer/tools/p2/src/rust/engine/fs" }
 futures01 = { package = "futures", version = "0.1" }
-hashing = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/hashing" }
+hashing = { path = "/Users/cosmicexplorer/tools/p2/src/rust/engine/hashing" }
 indexmap = "1.0.2"
 lazy_static = "1"
 memory = { path = "../memory" }
 protobuf = { version = "2.0.6", features = ["with-bytes"] }
 serde = "1.0"
 serde_json = "1.0"
-sharded_lmdb = { path = "/Users/dmcclanahan/tools/p2/src/rust/engine/sharded_lmdb" }
+sharded_lmdb = { path = "/Users/cosmicexplorer/tools/p2/src/rust/engine/sharded_lmdb" }
 
 [build-dependencies]
 cbindgen = "0.8.6"
